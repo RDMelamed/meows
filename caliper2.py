@@ -19,6 +19,7 @@ def caliperdict(hisdir, trt,median=True, percentile=90,redo=None,psmod="",hideou
     fname = hisdir + hideous + ".caliper." + \
              ("median" if median else "perc") + str(percentile) + ".pkl"
     if os.path.exists(fname): return
+    print("making caliper:", fname)
     trtinfo = his2ft.get_trt_info(hisdir, trt,hideous)
     
     cuts = defaultdict(float) #pd.DataFrame(np.zeros(bindf.shape[0]),index=bindf['binid'])

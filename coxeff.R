@@ -1,7 +1,7 @@
 library(survey)
 library(survival)
 weightedest <- function(weightdat){
-        todo = data.frame(weightdat$lab, weightdat$id, weightdat$ipw, 
+        todo = data.frame(weightdat$label, weightdat$id, weightdat$ipw, 
                           ifelse(weightdat$outcome > 0, weightdat$outcome, weightdat$deenroll),
                           weightdat$outcome > 0,
                           weightdat$deenroll)
@@ -31,6 +31,29 @@ xval <- function(pref,pattern){
     write.table(est, file=outfile)
     #e = data.frame(e=exp(est$surv), l=exp(est$surv - 1.96*est$survse), u=exp(est$surv + 1.96*est$survse))
     }
+
+singleoutcome <- function(pref, pattern){
+    wtout = read.table(paste(pref,pattern,"iptw",sep=""),sep="\t",header=T) #,row.names=0)
+    outcomes = colnames(wtout)[5:ncol(wtout)]
+    est = data.frame(matrix(nrow=length(outcomes),ncol=4))
+    dimnames(est) = list(c(outcomes,'any'), c("surv","survse","N","events"))
+    outfile = paste(pref,pattern,"eff",sep="")
+    cat(dim(est))
+    outix = 1
+    for (outc in outcomes){
+        #cat("at..",outc)
+        x = wtout[,c("label","id","ipw","deenroll",outc)]
+        colnames(x)[5] = "outcome"
+        #print(x[1:5,])
+        est[outc,] = c(weightedest(x),nrow(x), sum(x$outcome > 0))
+        write.table(est, file=outfile)
+    }
+    outc = ifelse(wtout
+    x = wtout[,c("label","id","ipw","deenroll",outc)]
+    colnames(x)[5] = "outcome"
+    
+    write.table(est, file=outfile)
+}
 
 bootstrapsurv <- function(outc, weightdat, savename, nbootstrap){
     startat = 2

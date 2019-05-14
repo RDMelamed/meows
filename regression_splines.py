@@ -23,6 +23,7 @@ import os
 from itertools import chain
 from scipy import sparse
 from patsy import dmatrix
+
 os.environ['MKL_THREADING_LAYER'] = 'GNU'
 from sklearn.preprocessing import MaxAbsScaler
 sys.path.append("../../code")
@@ -153,18 +154,21 @@ def cross_val(XS, lab, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1s=[.3,
     '''
     splits = get_splitvec(lab.shape[0], nf = numfold)        
     rocs = pd.DataFrame(index=sgdmods.keys(), columns=np.arange(numfold))
-    print("hi")
-    pdb.set_trace()
+
+    #pdb.set_trace()
     if len(l1s) > 1 or len(alphas) > 1:
+        #print("hiii")
         for f in range(numfold):
+            print("starting fold:")
             scaler.fit(XS[splits!=f,:])
             #pdb.set_trace()        
             Xval = scaler.transform(XS[splits==f,:])
             X = scaler.transform(XS[splits!=f,:])
-
+            print("about to fit fold:")
             for k in sgdmods:
                 sgdmods[k].fit(X, lab[splits!=f])
             labval = lab[splits == f]
+            print("about to eval fold:")            
             preds = {k:sgdmods[k].predict_proba(Xval)[:,1]
                      for k in sgdmods}
             for k in preds:

@@ -50,7 +50,7 @@ def load_sparse_mat(name, filename='store.h5'):
         # get nodes
         attributes = []
         for attribute in ('data', 'indices', 'indptr', 'shape'):
-            attributes.append(getattr(f.root, f'{name}_{attribute}').read())
+            attributes.append(getattr(f.root, "{:s}_{:s}".format(name,attribute)).read())
 
     # construct sparse matrix
     M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3])
@@ -65,7 +65,7 @@ def load_chunk(trt_h5, tn, trt_useids):
     trt_dense = node[:][sel,:]
     attributes = []
     for attribute in ('data', 'indices', 'indptr', 'shape'):
-        attributes.append(getattr(trt_h5.root, f'{tn}_{attribute}').read())
+        attributes.append(getattr(trt_h5.root, "{:s}_{:s}".format(tn,attribute)).read())
     M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3])[sel,:]
     return trt_dense, M
 
@@ -154,7 +154,7 @@ def featlab2modpred(dense, hisft, lab, alphas, l1s):
 
     modpred =  {'lab':lab} 
     if len(l1s) > 1 or len(alphas) > 1:
-        xval = rs.cross_val(XS, lab, 5,iter=5000000, alphas=alphas, l1s=l1s)
+        xval = rs.cross_val(XS, lab, 5,iter=15000000, alphas=alphas, l1s=l1s)
         #xval = xval[4]
         #pdb.set_trace()
         modpred.update({'xval':xval[4],'mods':xval[0],
@@ -171,7 +171,7 @@ def featlab2modpred(dense, hisft, lab, alphas, l1s):
     return modpred
 
 def mod_pred(XS, lab, alphas, l1_rs):    
-    max_iter = int(5000000/XS.shape[0]) #500 00000
+    max_iter = int(15000000/XS.shape[0]) #500 00000
     mods = rs.make_mods(max_iter, alphas, l1_rs)
     preds = {}
     roc = {}

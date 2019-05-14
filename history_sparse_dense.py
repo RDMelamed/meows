@@ -69,8 +69,8 @@ def history_parse(label, visits, dat, decode, outcomes, codesuffix, TEST=False):
                     olist.append(oweeks.min())
                 else:
                     ## get the last week before trt... up to ZERO
-                    return None ##  if any of htese outcomes happens BEFORE drug, we exclude this person
-                    #olist.append(oweeks[oweeks <= 0].max())
+                    #return None ##  if any of htese outcomes happens BEFORE drug, we exclude this person
+                    olist.append(oweeks[oweeks <= 0].max())
             '''
             if len(oweeks) > 0 and oweeks.min() > week:
                 #pdb.set_trace()                

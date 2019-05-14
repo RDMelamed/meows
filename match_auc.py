@@ -217,11 +217,11 @@ def loadncs(trt, ctl,moddo, sdir,ft='ago'):
     outcs = outcs.loc[outcsel,:]
     return {'ci':coxci, 'oct':outcs,'mct':matchct}
 
-def load_eff(ctl,trt, prefs, addpath=[]):
-    maincomp = {k:'neuropsycho_april/' + k+".Target." + str(trt) + "." + str(ctl) + ".eff" for k in prefs}
+def load_eff(hisdir, ctl,trt, prefs, addpath=[]):
+    maincomp = {k:hisdir + k+".Target." + str(trt) + "." + str(ctl) + ".eff" for k in prefs}
     if addpath:
         for p in addpath:
-            maincomp['min-' + p] = 'min-neuropsycho_april/'+ p +".Target." + str(trt) + "." + str(ctl) + ".eff"
+            maincomp['min-' + p] = 'min-' + hisdir+ p +".Target." + str(trt) + "." + str(ctl) + ".eff"
     eff2634 = load_regr(maincomp)
     return eff2634.loc[eff2634.xs('event',level=1,axis=1).min(axis=1) > 200,:]
 

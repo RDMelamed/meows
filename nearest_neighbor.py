@@ -13,7 +13,7 @@ import ps_match
 import weights_outcomes
 import ps
 from matching import *
-def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vocab2superft={}, psmatcher='',psmatch_caliper=95, hideous=''):
+def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vocab2superft={}, psmatcher='',psmatch_caliper=95, hideous='',single_outcomes=False):
     #his2ft.bin_pats(hisdir,emb50,coxfilt,ctlf, savename, filtid = comm_trt_ctl)
     #tables.file._open_files.close_all()
     outcomes = sorted(outcomes.keys())
@@ -21,7 +21,7 @@ def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vo
     print(savename, " did matching...")
     ## matchname will be same as savename UNLESS we are doing PSmatch then savename.PSfilt
 
-    matchname, matchcounts = matchctl(hisdir, savename,drugid,trtname,calipername, filt_trt, outcomes, ps_matcher=psmatcher,pscaliper=psmatch_caliper, hideous=hideous)
+    matchname, matchcounts = matchctl(hisdir, savename,drugid,trtname,calipername, filt_trt, outcomes, ps_matcher=psmatcher,pscaliper=psmatch_caliper, hideous=hideous, single_outcomes=single_outcomes)
     '''    
     tids = set([])
     cids = set([])    
@@ -41,41 +41,42 @@ def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vo
                            idfile=matchname + ".union", vocab2superft=vocab2superft)
     '''
     alpha=[.0001,.001,.01]; l1=[.2,.3]
-
-
-    smallest = pd.Series(matchcounts).idxmin()
-    #pdb.set_trace()    
-    f, xval = ps.ctl_propensity_score(hisdir,trtname,savename,
-                                      matchname + "." + outcomes[smallest] + ".ids",
-                                      ['ago'],transfunc=ps.agobins,alphas=alpha, l1s=l1)
-    x = xval.mean(axis=1).idxmax().split("-")
-    print(f, xval.mean(axis=1).idxmax())
-    ls_do = [float(x[0])]
-    alph_do = [float(x[1])]
-
-    #for ix, osave in enumerate(osaves):
-    #    xval = ps.ctl_propensity_score(hisdir,trtname, pair_allid,osave,['ago'],transfunc=ps.agobins,alphas=alph_do, l1s=l1s_do)
-    
-    #("" if not transfunc else "." + transfunc.__name__)
-    for o in outcomes:
-        r = ps.ctl_propensity_score(hisdir,trtname, savename, matchname + "." + o + '.ids',alphas=alph_do, l1s=ls_do)
-    weights_outcomes.outcome_info(hisdir, matchname, trtname, drugid, savename, outcomes, filt_trt)
+    if single_outcomes:
+        f, xval = ps.ctl_propensity_score(hisdir,trtname,savename,
+                                      matchname + ".ids",alphas=alpha, l1s=l1)
+    else:
+        smallest = pd.Series(matchcounts).idxmin()
+        #pdb.set_trace()    
+        f, xval = ps.ctl_propensity_score(hisdir,trtname,savename,
+                                          matchname + "." + outcomes[smallest] + ".ids",
+                                          ['ago'],transfunc=ps.agobins,alphas=alpha, l1s=l1)
+        x = xval.mean(axis=1).idxmax().split("-")
+        print(f, xval.mean(axis=1).idxmax())
+        ls_do = [float(x[0])]
+        alph_do = [float(x[1])]
+        #("" if not transfunc else "." + transfunc.__name__)
+        for o in outcomes:
+            r = ps.ctl_propensity_score(hisdir,trtname, savename, matchname + "." + o + '.ids',alphas=alph_do, l1s=ls_do)
+    weights_outcomes.outcome_info(hisdir, matchname, trtname, drugid, savename, outcomes, filt_trt, single_outcomes=single_outcomes)
 
 #def get_binned_ids(tabfile):
 #    return ids
 
 import time
 def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcomes,
-             ps_matcher='',pscaliper=95,hideous=''):
+             ps_matcher='',pscaliper=95,hideous='', single_outcomes=False):
     savename = ('NNPSfilt' + str(pscaliper) if ps_matcher else 'NN')+ hideous + "." + ctlfile
     did_match = True
     counts = {}
-    for ix, osave in enumerate(ordered_outcomes):
-        if not os.path.exists(hisdir + savename + "." + osave + ".ids.trt"):
-            did_match = False
-            break
-        else:
-            counts[ix] = np.loadtxt(hisdir + savename + "." + osave + ".ids.trt").shape[0]
+    if not single_outcomes:
+        did_match = os.path.exists(hisdir + savename + ".ids.trt")
+    else:
+        for ix, osave in enumerate(ordered_outcomes):
+            if not os.path.exists(hisdir + savename + "." + osave + ".ids.trt"):
+                did_match = False
+                break
+            else:
+                counts[ix] = np.loadtxt(hisdir + savename + "." + osave + ".ids.trt").shape[0]
     if did_match:
         return savename, counts
     print("hi!")
@@ -93,7 +94,9 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
     looking_for = 30
     TRTID = []
     CTLID = []
-    outcome_matches = {o:[[],[]] for o in range(len(ordered_outcomes))}
+    tc_matches = [[], []]
+    if not single_outcomes:
+        tc_matches = {o:[[],[]] for o in range(len(ordered_outcomes))}
     ix = 0
     print("DOING:",trtinfo['bindf'].shape[0])
     t0 = time.time()
@@ -114,7 +117,7 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
         #ctloutcom = ctloutcomes.get_node("/" + binid)
         #to_exclude = out_exclude(trt_compare, trtoutc, ctlids, ctloutcomes, binid)
         #ctloutc_bin = 
-        to_exclude = out_exclude(trt_compare, trtoutc, ctlids, ctlbins.get_node("/outcomes/" + binid))        
+
         '''
         to_exclude = defaultdict(list) # {o:[[],[]] for o in outcome}
         poo = list(zip(*tuple((ctlids, list(ctloutcomes.get_node("/" + binid)))))) + list(zip(*tuple((trt_compare.index, trtoutc))))
@@ -131,38 +134,42 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
                                             trtinfo['prec'],psmod)
         ix += 1        
         if ix % 50 == 0:
-            print('{:d} {:s} have {:d} in {:s} in {:2.1f} minutes\n'.format(ix,binid,len(outcome_matches[0][0]),savename, (time.time()-t0)/60))
-        
-        #continue
-        #pdb.set_trace()        
-        #to_exclude.items()
-        #        for outcome, to_excl in to_exclude.items():
-        for outcome in range(len(ordered_outcomes)):
-            #if outcome==11:
-            #    pdb.set_trace()
-            if outcome not in to_exclude:
-                outcome_matches[outcome][0] += tmatch_all
-                outcome_matches[outcome][1] += cmatch_all
-            else:
-                #pdb.set_trace()
-                to_excl = to_exclude[outcome]
-                t = trt_compare.loc[~np.isin(trt_compare.index, to_excl),:]
-                c = ctldat.loc[~np.isin(ctldat.index, to_excl),:]
-                if t.shape[0] == 0 or c.shape[0]==0:
-                    continue
-                tmatch, cmatch = one_bin_NN_pscaliper(t, c,
-                                                embcutoff, pscutoff,
-                                                trtinfo['prec'],psmod)
-                outcome_matches[outcome][0] += tmatch
-                outcome_matches[outcome][1] += cmatch
+            print('{:d} {:s} have {:d} in {:s} in {:2.1f} minutes\n'.format(ix,binid,len(tc_matches[0]) if single_outcomes else len(tc_matches[0][0]),savename, (time.time()-t0)/60))
+        if single_outcomes:
+            tc_matches[0] += tmatch_all
+            tc_matches[1] += cmatch_all
+        else:
+            to_exclude = out_exclude(trt_compare, trtoutc, ctlids, ctlbins.get_node("/outcomes/" + binid))                
+            for outcome in range(len(ordered_outcomes)):
+                #if outcome==11:
+                #    pdb.set_trace()
+                if outcome not in to_exclude:
+                    tc_matches[outcome][0] += tmatch_all
+                    tc_matches[outcome][1] += cmatch_all
+                else:
+                    #pdb.set_trace()
+                    to_excl = to_exclude[outcome]
+                    t = trt_compare.loc[~np.isin(trt_compare.index, to_excl),:]
+                    c = ctldat.loc[~np.isin(ctldat.index, to_excl),:]
+                    if t.shape[0] == 0 or c.shape[0]==0:
+                        continue
+                    tmatch, cmatch = one_bin_NN_pscaliper(t, c,
+                                                    embcutoff, pscutoff,
+                                                    trtinfo['prec'],psmod)
+                    tc_matches[outcome][0] += tmatch
+                    tc_matches[outcome][1] += cmatch
         #if ix > 5:
         #    break
         #print('{:d} {:s} have {:d}\n'.format(ix,binid,len(outcome_matches[0][0])))        
     #pdb.set_trace()
     counts = {}
-    for ix, oname in enumerate(ordered_outcomes):
-        np.savetxt(hisdir + savename + "." + oname + ".ids.trt", outcome_matches[ix][0])
-        np.savetxt(hisdir + savename + "." + oname + ".ids.ctl", outcome_matches[ix][1])
-        counts[ix] = len(outcome_matches[ix][1])
+    if single_outcomes:
+        np.savetxt(hisdir + savename + ".ids.trt", tc_matches[0])
+        np.savetxt(hisdir + savename + ".ids.ctl", tc_matches[1])
+    else:
+        for ix, oname in enumerate(ordered_outcomes):
+            np.savetxt(hisdir + savename + "." + oname + ".ids.trt", tc_matches[ix][0])
+            np.savetxt(hisdir + savename + "." + oname + ".ids.ctl", tc_matches[ix][1])
+            counts[ix] = len(tc_matches[ix][1])
 
     return savename, counts

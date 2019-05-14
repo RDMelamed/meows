@@ -29,7 +29,7 @@ def get_ps(modname):
     modsetting = settings[0] if len(settings) == 1 else psmod['xval'].mean(axis=1).idxmax() 
     return pd.Series(psmod['preds'][modsetting],index=psmod['ids'])
 
-def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, outcomes, alpha, l1, vocab2superft={}): ##comm_ids will be allready removed from ctl via first run
+def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, outcomes, alpha, l1, vocab2superft={},single_outcomes=True): ##comm_ids will be allready removed from ctl via first run
     #print("runctl:--",hisdir)
 
     
@@ -46,38 +46,46 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
     def match_eval(psmod, savename):
         osaves = [savename + "." + oname + ".ids" for oname in outcome_ord]
         ### match on PS
-        did_match = True
-        nmatch = {}                
-        for ix, osave in enumerate(osaves):
-            if not os.path.exists(hisdir + osave + ".trt"):
-                did_match = False
-                break
-            else:
-                nmatch[ix] = np.loadtxt(hisdir + osave + ".trt").shape[0]
+        did_match = os.path.exists(hisdir + savename + ".ids.trt")
+        nmatch = {}
+        if not single_outcomes:
+            did_match = True
+            for ix, osave in enumerate(osaves):
+                if not os.path.exists(hisdir + osave + ".trt"):
+                    did_match = False
+                    break
+                else:
+                    nmatch[ix] = np.loadtxt(hisdir + osave + ".trt").shape[0]
         #pdb.set_trace()
 
         if not did_match:
-            outc_match = match_ps(hisdir, pairname, drugid,trtname, psmatch, psmod,
-                                    outcome_ord)
-            for ix, osave in enumerate(osaves):
-                nmatch[ix] = len(outc_match[ix][0])
-                np.savetxt(hisdir + osave + ".trt", outc_match[ix][0])        
-                np.savetxt(hisdir + osave + ".ctl", outc_match[ix][1])
-            
-            del outc_match
+            matches = match_ps(hisdir, pairname, drugid,trtname, psmatch, psmod,
+                                    outcome_ord, single_outcomes)
+            if single_outcomes:
+                np.savetxt(hisdir + savename + ".ids.trt", matches[0])        
+                np.savetxt(hisdir + savename + ".ids.ctl", matches[1])
+            else:
+                for ix, osave in enumerate(osaves):
+                    nmatch[ix] = len(matches[ix][0])
+                    np.savetxt(hisdir + osave + ".trt", matches[ix][0])        
+                    np.savetxt(hisdir + osave + ".ctl", matches[ix][1])
+
+                del matches
 
         ### now get PS -- for each outcome
         #pdb.set_trace()        
-        ### for smallest outcome, do cross-validation:        
-        smallest = pd.Series(nmatch).idxmin()
-        f, xval = ps.ctl_propensity_score(hisdir,trtname, pair_allid,osaves[smallest],['ago'],transfunc=ps.agobins,alphas=alpha, l1s=l1)
-        x = xval.mean(axis=1).idxmax().split("-")
-        l1s_do = [float(x[0])]
-        alph_do = [float(x[1])]
-
-        for ix, osave in enumerate(osaves):
-            xval = ps.ctl_propensity_score(hisdir,trtname, pair_allid,osave,['ago'],transfunc=ps.agobins,alphas=alph_do, l1s=l1s_do)
-        weights_outcomes.outcome_info(hisdir, savename, trtname, drugid, pairname, outcome_ord, trt_to_exclude)            
+        ### for smallest outcome, do cross-validation:
+        if single_outcomes:
+            f, xval = ps.ctl_propensity_score(hisdir,trtname, pairname,savename + ".ids",alphas=alpha, l1s=l1)
+        else:
+            smallest = pd.Series(nmatch).idxmin()
+            f, xval = ps.ctl_propensity_score(hisdir,trtname, pairname,osaves[smallest],alphas=alpha, l1s=l1)
+            x = xval.mean(axis=1).idxmax().split("-")
+            l1s_do = [float(x[0])]
+            alph_do = [float(x[1])]
+            for ix, osave in enumerate(osaves):
+                xval = ps.ctl_propensity_score(hisdir,trtname, pairname,osave,['ago'],transfunc=ps.agobins,alphas=alph_do, l1s=l1s_do)
+        weights_outcomes.outcome_info(hisdir, savename, trtname, drugid, pairname, outcome_ord, trt_to_exclude, single_outcomes=single_outcomes)            
     ## removing Superft, see ps_match2 for the code
         
     ### "sparsematched"
@@ -88,30 +96,8 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
     match_eval(runctl_psmatch_emb(hisdir,trtname,pairname, drugid,
                                   trt_to_exclude, pair_allid),
                "PSM" + str(psmatch) + ".ebm." + pairname)
-'''    
-    ### match on PS
-    psmod = get_ps(hisdir + pair_allid + ".ids.psmod.pkl")
-    savename =  "PSM" + str(psmatch) + ".spm." + pairname
-    
-    if not os.path.exists(hisdir + savename + ".ids.trt"):
-        trtid, ctlid = match_ps(hisdir, pairname, drugid,trtname, psmatch, psmod)
-        np.savetxt(hisdir + savename + ".ids.trt", trtid)        
-        np.savetxt(hisdir + savename + ".ids.ctl", ctlid)
-    ### evaluate using pre-matched feature files (trtname, pair_allid), filter with savename
-    ps.ctl_propensity_score(hisdir,trtname, pair_allid,savename + '.ids',['ago'],transfunc=control_match3.agobins,alphas=alpha, l1s=l1)
-    ## removing Superft, see ps_match2 for the code    
-    psmod = runctl_psmatch_emb(hisdir,trtname,pairname, drugid,
-                                trt_to_exclude, pair_allid)
-    ### match on PS
-    savename =  "PSM" + str(psmatch) + ".spm." + pairname            
-    if not os.path.exists(hisdir + savename + ".ids.trt"):
-        trtid, ctlid = match_ps(hisdir, pairname, drugid,trtname, psmatch, psmod)
-        np.savetxt(hisdir + savename + ".ids.trt", trtid)        
-        np.savetxt(hisdir + savename + ".ids.ctl", ctlid)
-    ps.ctl_propensity_score(hisdir,trtname, pair_allid,savename + '.ids',['ago'],transfunc=control_match3.agobins,alphas=alpha, l1s=l1)        
-'''
         
-def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes):
+def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes, single_outcomes):
 
     trtinfo = his2ft.get_trt_info(hisdir + trtname, trt)
     ## only need this to get the bins to patients
@@ -124,14 +110,20 @@ def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes):
     ix = 0
     scored_ids = psmod.index
     print("DOING:",trtinfo['bindf'].shape[0])
-    outcome_matches = {o:[[],[]] for o in range(len(ordered_outcomes))}
+    tc_matches = [[],[]]
+    #pdb.set_trace()
+    if not single_outcomes:
+        tc_matches = {o:[[],[]] for o in range(len(ordered_outcomes))}
     for binid in trtinfo['bindf']['binid']: # drugbins.walk_nodes("/","EArray"):
         if not "/" + binid in ctlbins:
             continue
         trt_compare, trtoutc = matching.binfo(trtinfo, binid)
-        #pdb.set_trace()
+        #if binid == 't412':
+        #    pdb.set_trace()
         #node = trtinfo['drugbins'].get_node("/" + binid)
         #trtids = set(node[:,0]) & scored_ids
+        #if binid == "t60":
+        #    pdb.set_trace()
         tsel = np.isin(trt_compare.index,scored_ids)
         trt_ids = trt_compare.index[tsel]
         trt_compare = psmod.loc[trt_ids]
@@ -154,48 +146,115 @@ def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes):
         if len(ctlids) != ctldat.shape[0]:
             pdb.set_trace()
         ctldat = psmod.loc[ctlids]
-        ctloutc_bin = ctldat.get_node("/outcomes/" + binid)[csel]
-        to_exclude = matching.out_exclude(trt_compare, trtoutc, ctlids, ctloutc_bin)
-        #pdb.set_trace()
+
         tall,call = matching.one_bin_PSM(trt_compare,
                                          ctldat,
                                      caliper,binid)
-        
-        for i in range(len(ordered_outcomes)):
-            #if i == 7:
-            #    pdb.set_trace()
-            #for outcome, toexcl in to_exclude.items():
-            if not i in to_exclude:
-                outcome_matches[i][0] += tall
-                outcome_matches[i][1] += call
-            else:
-                t,c = matching.one_bin_PSM(trt_compare.loc[~np.isin(trt_compare.index,to_exclude[i])],
-                                         ctldat.loc[~np.isin(ctldat.index,to_exclude[i])],
-                                         caliper,binid)
-                if len(t) > 0:
-                    outcome_matches[i][0] += t
-                    outcome_matches[i][1] += c
-            #if outcome==6: # and len(outcome_matches[outcome-1][0]) > 2: #min(trt_compare.shape[0],ctldat.shape[0]) > 5 and len(t) == 0:
-            #    pdb.set_trace()
-            #    print(outcome)
-        #pdb.set_trace()
+
+        if single_outcomes:
+            tc_matches[0] += tall
+            tc_matches[1] += call            
+        else:
+            #pdb.set_trace()
+            ctloutc_bin = ctlbins.get_node("/outcomes/" + binid)[csel]
+            to_exclude = matching.out_exclude(trt_compare, trtoutc, ctlids, ctloutc_bin)
+            #pdb.set_trace()
+
+            for i in range(len(ordered_outcomes)):
+                #if i == 7:
+                #    pdb.set_trace()
+                #for outcome, toexcl in to_exclude.items():
+                if not i in to_exclude:
+                    tc_matches[i][0] += tall
+                    tc_matches[i][1] += call
+                else:
+                    t,c = matching.one_bin_PSM(trt_compare.loc[~np.isin(trt_compare.index,to_exclude[i])],
+                                             ctldat.loc[~np.isin(ctldat.index,to_exclude[i])],
+                                            caliper,binid)
+                    if len(t) > 0:
+                        tc_matches[i][0] += t
+                        tc_matches[i][1] += c
         ix += 1
         if ix % 50 == 0:
-            print('{:d} have {:d}\n'.format(ix,len(outcome_matches[0][0])))
+            print('{:d} have {:d}\n'.format(ix,
+                                            len(tc_matches[0]) if single_outcomes else len(tc_matches[0][0])))
 
     #pdb.set_trace()
             
-    return outcome_matches
+    return tc_matches
     #ctl_propensity_score(hisdir,name, ctlfile,outname)
 
 
-    featlab2modpred(dense, hisft, lab, alphas, l1s)
-#def runctl_psmatch_emb(hisdir, trtname, savename, coxoutc, coxfilt, outc,emb50,ctlf,drugid,psmatch):
+
+def runctl_psmatch_emb_nonpartial(hisdir, trtname, savename, trt, trt_to_exclude,idname, alphas=10**np.arange(-4.0,-1.0),l1s=[.2,.3,.4]): ##comm_ids = in trt & ctl but ctl will have these removed from binembeds
+    print("runctl:--",hisdir)
+
+    psmod_savefile = hisdir + idname + ".embedps.pkl"
+    if os.path.exists(psmod_savefile):
+        mod, psm, xval = pickle.load(open(psmod_savefile,'rb'))
+        return psm
+    ## fit PS models on everyone in the same bins
+    ctlbins = tables.open_file(his2ft.gen_embname(hisdir, savename) ,mode="r")
+    #trtbins = tables.open_file(hisdir + trtname +"binembeds.pytab" ,mode="r")
+    trtinfo = his2ft.get_trt_info(hisdir + trtname, trt)
+    def get_x(binid):
+        if not "/" + binid in ctlbins:
+            return None
+        #trt_compare, ctldat, cutoff = match_in_bin.binfo(trtinfo, binid)
+        node = trtinfo['drugbins'].get_node("/" + binid)
+        ids = node[:,0]
+        sel = ~np.isin(ids,trt_to_exclude)
+        ids = ids[sel]
+        if ids.shape[0] == 0:
+            return None
+        #trt_compare = node[sel,:]
+        #trtdem = splinify(trt_compare[:,:6])
+        trt_compare = trtinfo['scaler'].transform(node[:,6:][sel,:])
+        #trt_compare, trtoutc = matching.binfo(trtinfo, binid)
+
+        ctldat = ctlbins.get_node("/" + binid)
+        #ctldem = splinify([:,:6])
+
+        ### compile together to return
+        lab = np.append(np.ones(trt_compare.shape[0]),np.zeros(ctldat.shape[0]))
+        ids = np.hstack([ids, ctldat[:,0]])
+        demo = np.vstack((node[:,2:9][sel,:], ctldat[:,2:9]))
+        return np.vstack((trt_compare,
+                          trtinfo['scaler'].transform(ctldat[:,6:]))), lab, ids, demo
+
+    Xs = []
+    labs = []
+    ids = []; demos = []
+    for binid in trtinfo['bindf']['binid']: # drugbins.walk_nodes("/","EArray"):
+        X = get_x(binid)
+        if not X:
+            continue
+        X, lab, xids, demo = X
+        Xs.append(X); labs.append(lab); ids.append(xids); demos.append(demo)
+    demos = np.vstack(demos); labs = np.hstack(labs)
+    spline_info = rs.get_spline_info(demos[labs==1,:])    
+    splinify = rs.info2splines(spline_info)
+    demos = splinify(demos)
+    Xs = np.hstack((demos, np.vstack(Xs)))
+    del demos
+    xval = rs.cross_val(Xs, labs, 5,iter=5000000, alphas=alphas, l1s=l1s)
+    optmod = xval[4].mean(axis=1).idxmax()
+    pscore = xval[3][optmod]
+    pscore = pd.Series(xval[3][optmod],index=np.hstack(ids))
+    #pscore = pd.Series(np.hstack(pscore),index=np.hstack(ids))
+    #pdb.set_trace()    
+    f = open(psmod_savefile,'wb')
+    pickle.dump((xval[0], pscore, xval[4]),f)
+    f.close()
+    return pscore 
+
+
+
 def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, alphas=10**np.arange(-4.0,-1.0),l1s=[.2,.3,.4]): ##comm_ids = in trt & ctl but ctl will have these removed from binembeds
     print("runctl:--",hisdir)
     psmod_savefile = hisdir + idname + ".embedps.pkl"
     if os.path.exists(psmod_savefile):
-        mod, psm = pickle.load(open(psmod_savefile,'rb'))
+        mod, psm, xval = pickle.load(open(psmod_savefile,'rb'))
         return psm
     '''
     trtdense = pd.read_csv(hisdir + trtname + ".den",sep="\t",header=None)
@@ -245,7 +304,7 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
     
 
     ### fit models
-    desired_iter = 5000000    
+    desired_iter = 15000000    
     iter = 0
     numfold = 5    
     while iter < desired_iter:
@@ -267,6 +326,7 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
 
     ### get preds to select model
     opt = list(mods.keys())[0]
+    rocs = {}
     if len(mods) > 1:
         pred_test = {m:[] for m in mods}
         lab_test = []
@@ -304,6 +364,6 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
         ids.append(binids)
     pscore = pd.Series(np.hstack(pscore),index=np.hstack(ids))
     f = open(psmod_savefile,'wb')
-    pickle.dump((mods, pscore),f)
+    pickle.dump((mods, pscore,rocs),f)
     f.close()
     return pscore 
