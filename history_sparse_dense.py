@@ -19,10 +19,11 @@ from itertools import chain
 import skips
 from collections import Counter
 import shutil
+import psutil
 
 os.system('taskset -p 0xffffffff %d' % os.getpid())
 cache_size = 50
-TESTING = False #False
+TESTING = False
 
 if TESTING:
     cache_size = 1
@@ -57,7 +58,6 @@ def history_parse(label, visits, dat, decode, outcomes, codesuffix, TEST=False):
     if dxout.shape[0] > 0:
         olist = [max(olist[0], dxout[:,dxc['week']].max()-week)]
         for outi, codes in enumerate(outcomes):
-
             #oweeks = dx[dx[:,2 if outcomeicd else 0]==oc,1] ### column 2 = icd codes rather than phe!
             #pdb.set_trace()
             oweeks = dxout[np.isin(dxout[:,dxc['icd']], codes),dxc['week']] ### column 2 = icd codes rather than phe!
@@ -69,8 +69,14 @@ def history_parse(label, visits, dat, decode, outcomes, codesuffix, TEST=False):
                     olist.append(oweeks.min())
                 else:
                     ## get the last week before trt... up to ZERO
-                    #return None ##  if any of htese outcomes happens BEFORE drug, we exclude this person
-                    olist.append(oweeks[oweeks <= 0].max())
+                    ##  if any of htese outcomes happens BEFORE drug, we exclude this person
+                    if TEST:
+                        return [-10] + list(set(dxout[np.isin(dxout[:,dxc['icd']], codes) &
+                                                  (dxout[:,dxc['week']] < week),dxc['icd']]))
+                    else:
+                        return None
+                                       
+                    #olist.append(oweeks[oweeks <= 0].max())
             '''
             if len(oweeks) > 0 and oweeks.min() > week:
                 #pdb.set_trace()                
@@ -130,6 +136,43 @@ def get_elements_weights(elwk, wmax):
 def stringify(res):
     return "\t".join([str(i) for i in res]) + '\n'
 
+
+def mysteryloop(Q, doid, name, prefix, outcomes, mix=False):
+    decode = pickle.load(open(datdir +"decode.12.18.clid.allvocab.pkl",'rb'))
+    conn, pcurs = skips.get_conn_curs()    
+    econn = sqlite3.Connection("/project2/melamed/db/enr2.db")
+    ecurs = econn.cursor()
+    ecurs.execute("PRAGMA cache_size=2000;")
+
+    codesuffix = 'vi'
+    tried = 0
+    gots = 0
+    excludereasons = defaultdict(int)
+    for (pdone, person) in iter(Q.get, None):
+        #print("P:" , person)
+        tried += 1
+        pcurs.execute('select * from kv where person = ?',(person,))
+
+        dat = json.loads(pcurs.fetchone()[1])
+        ecurs.execute('select * from kv where person = ?',(person,))
+        dat['enroll'] = json.loads(ecurs.fetchone()[1])
+
+        alldo, visits = urx_rx_dx(dat, doid, decode, codesuffix)
+
+        for label in alldo:
+            res = history_parse(label, visits,dat, decode, outcomes, codesuffix, TEST=True)
+            if res[0]==-10:
+                for r in res[1:]:
+                    excludereasons[r] += 1
+        if pdone % 100000 == 0:
+            with open('logf','a') as f:
+                f.write('done ' + str(pdone) + '\n') # + ' ' + list(fname.values())[0] +'\n')
+
+    print("tried:", tried, " got: " , gots)       
+    f = open("excludereasons" + str(name) + ".pkl",'wb')
+    pickle.dump(excludereasons, f)
+    f.close()
+    
 def historyloop(Q, doid, name, prefix, outcomes, mix=False):
     decode = pickle.load(open(datdir +"decode.12.18.clid.allvocab.pkl",'rb'))
 
@@ -164,10 +207,11 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
     codesuffix = 'vi'
 
     tried = 0
-    gots = 0      
+    gots = 0
+    t0 = time.time()
     for (pdone, person) in iter(Q.get, None):
         #print("P:" , person)
-        tried += 1
+
         pcurs.execute('select * from kv where person = ?',(person,))
 
         dat = json.loads(pcurs.fetchone()[1])
@@ -183,7 +227,8 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
         #if TESTING:        
         #    print person, res
         alldo, visits = urx_rx_dx(dat, doid, decode, codesuffix)
-
+        if alldo:
+            tried += 1                        
         for label in alldo:
             try:
                 res = history_parse(label, visits,dat, decode, outcomes, codesuffix)
@@ -197,6 +242,7 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
             res = [person] + res[1] + [-1] + res[0]
             obs[drug] += stringify(res)
             count[drug] += 1
+
         #else:
         #    with open(logf,'a') as f:
         #        f.write('no: '+str(person))
@@ -204,8 +250,14 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
         #    print 'person = 2' + str(len(res))
         if pdone % 100000 == 0:
             with open(logf,'a') as f:
-                f.write('done ' + str(pdone) + '\n') # + ' ' + list(fname.values())[0] +'\n')
+                pid = os.getpid()
+                py = psutil.Process(pid)
+                memoryUse = py.memory_info()[0]/2.**30  # memory use in GB...I think
+                #print('memory use:', memoryUse)                
+                f.write('done ' + str(pdone) +
+                        "time={:1.2f}min, mem={:1.2f}Gb".format((time.time()-t0)/60, memoryUse) + '\n') # + ' ' + list(fname.values())[0] +'\n')
         #if len(obs) > 50000:
+        
         for k in count:
             if not k in fname:
                 fname[k] = getfname(it, k)
@@ -253,7 +305,7 @@ def enQminus(Q, doid, nprocs,ndo=0, samp=.1):
     for i in range(nprocs):
         Q.put(None, block=True)
 
-def main(doid,prefix, outcomes, ndo=0,neg_enQ=False):
+def main(doid,prefix, outcomes, ndo=0,neg_enQ=False, history=True):
     if os.path.exists(prefix):
         print(prefix + " EXISTS--QUITTING!")
         return
@@ -268,8 +320,13 @@ def main(doid,prefix, outcomes, ndo=0,neg_enQ=False):
     enQproc = mp.Process(target = enQ.enQ if not neg_enQ else enQminus,
                          args = (Q, doid,nprocs,ndo))
     enQproc.start()
+    if TESTING:
+        target = historyloop if history else mysteryloop
+        target(Q, doid if not neg_enQ else set([]),
+                                            str(0), prefix,outcomes)
+        return
     for i in range(nprocs):
-        loadprocs.append(mp.Process(target = historyloop,
+        loadprocs.append(mp.Process(target = historyloop if history else mysteryloop,
                                     args = (Q, doid if not neg_enQ else set([]),
                                             str(i), prefix,outcomes)))
         loadprocs[-1].start()
