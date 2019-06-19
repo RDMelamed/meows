@@ -1,30 +1,37 @@
 library(survey)
 library(survival)
-weightedest <- function(weightdat){
+weightedest <- function(weightdat, weighted=T){
         todo = data.frame(weightdat$label, weightdat$id, weightdat$ipw, 
                           ifelse(weightdat$outcome > 0, weightdat$outcome, weightdat$deenroll),
                           weightdat$outcome > 0,
                           weightdat$deenroll)
         #cat("wtest-- ",dim(todo),"\n")
         colnames(todo) = c("lab","id","ipw","deathcens","death","deenroll")
-        sfit3 <- coxph(Surv(deathcens, death) ~ lab + cluster(id), data=todo, weight=ipw)
+        sfit3 = c(0,0)
+        if(weighted==F){
+            sfit3 <- coxph(Surv(deathcens, death) ~ lab, data=todo)
+            }else{
+                sfit3 <- coxph(Surv(deathcens, death) ~ lab + cluster(id), data=todo, weight=ipw)
+                }
         return( c(coef(sfit3), SE(sfit3)['lab']) )
 }
 
-xval <- function(pref,pattern){
+xval <- function(pref,pattern,weighted=T){
     cat("coxeff ",pattern,"\n")
                                         #cat("making df:",ncol(outcAll)-3)
     todo = list.files(pref,pattern=paste(pattern,".*.iptw$",sep=""))
     outcomes = gsub(".iptw","",gsub(pattern,"",todo,fixed=T),fixed=T)
     est = data.frame(matrix(nrow=length(outcomes),ncol=4))
     dimnames(est) = list(outcomes, c("surv","survse","N","events"))
-    outfile = paste(pref,pattern,"eff",sep="")
-    cat(dim(est))
+    outfile = paste(pref,ifelse(weighted,"","unwt."),pattern,"eff",sep="")
+    cat("writing to ", outfile)
+    #return()
+    cat(dim(est)) 
     outix = 1
     for (wtfile in todo){
         #cat("ONIT:",wtfile,"\n")
         x = read.table(paste(pref,wtfile,sep=""),sep="\t",header=T) #,row.names=0)
-        est[outcomes[outix],] = c(weightedest(x),nrow(x), sum(x$outcome > 0))
+        est[outcomes[outix],] = c(weightedest(x, weighted),nrow(x), sum(x$outcome > 0))
         outix = outix + 1
         write.table(est, file=outfile)
     }
@@ -32,12 +39,12 @@ xval <- function(pref,pattern){
     #e = data.frame(e=exp(est$surv), l=exp(est$surv - 1.96*est$survse), u=exp(est$surv + 1.96*est$survse))
     }
 
-singleoutcome <- function(pref, pattern){
+singleoutcome <- function(pref, pattern,weighted=T){
     wtout = read.table(paste(pref,pattern,"iptw",sep=""),sep="\t",header=T) #,row.names=0)
     outcomes = colnames(wtout)[5:ncol(wtout)]
     est = data.frame(matrix(nrow=length(outcomes),ncol=4))
-    dimnames(est) = list(c(outcomes,'any'), c("surv","survse","N","events"))
-    outfile = paste(pref,pattern,"eff",sep="")
+    dimnames(est) = list(c(outcomes), c("surv","survse","N","events"))
+    outfile = paste(pref,ifelse(weighted,"","unwt."),pattern,"eff",sep="")
     cat(dim(est))
     outix = 1
     for (outc in outcomes){
@@ -45,12 +52,12 @@ singleoutcome <- function(pref, pattern){
         x = wtout[,c("label","id","ipw","deenroll",outc)]
         colnames(x)[5] = "outcome"
         #print(x[1:5,])
-        est[outc,] = c(weightedest(x),nrow(x), sum(x$outcome > 0))
+        est[outc,] = c(weightedest(x, weighted),nrow(x), sum(x$outcome > 0))
         write.table(est, file=outfile)
     }
-    outc = ifelse(wtout
-    x = wtout[,c("label","id","ipw","deenroll",outc)]
-    colnames(x)[5] = "outcome"
+    #outc = ifelse(wtout
+    #x = wtout[,c("label","id","ipw","deenroll",outc)]
+    #colnames(x)[5] = "outcome"
     
     write.table(est, file=outfile)
 }

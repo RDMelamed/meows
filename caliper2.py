@@ -16,6 +16,8 @@ import os
 import ps_match
 
 def caliperdict(hisdir, trt,median=True, percentile=90,redo=None,psmod="",hideous=''):
+    if percentile == 0:
+        return None
     fname = hisdir + hideous + ".caliper." + \
              ("median" if median else "perc") + str(percentile) + ".pkl"
     if os.path.exists(fname): return

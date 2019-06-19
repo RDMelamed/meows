@@ -70,10 +70,11 @@ def drug_group2(drugid, doid, hisdir,NN_pscaliper,outcomes, vocab2superft={},
     dodict, emb50, hideous_name = load_ugly(doid)
     print("dodict:", dodict)    
     his2ft.bin_pats(hisdir,emb50,{},trtfiles,trtname, is_trt=True)
-    
+    tables.file._open_files.close_all()    
     if hideous: ### nearest neighbor will use this one 
        emb, hideous_name = load_emb(hideous)
        his2ft.bin_pats(hisdir,emb,{},trtfiles,trtname, is_trt=True,hideous=hideous_name)
+       tables.file._open_files.close_all()    
        caliper.caliperdict(hisdir + trtname, drugid,
                         median=caliper_median_method,percentile=caliper_percentile, hideous=hideous_name)
     else:
@@ -81,7 +82,7 @@ def drug_group2(drugid, doid, hisdir,NN_pscaliper,outcomes, vocab2superft={},
                         median=caliper_median_method,percentile=caliper_percentile)
     calipername = ('perc' if caliper_median_method==False else 'med') + str(caliper_percentile)   
 
-    tables.file._open_files.close_all()
+
 
     ### create sparsemat ONCE rather than doing it for every pair...
     his2ft.prepare_sparsemat2(hisdir,trtname, trtname,{},trtfiles)
@@ -152,7 +153,6 @@ def onectl(hisdir, trtname,trtfiles,drugid, calipername,
     commidfile = hisdir + savename + ".comm_id"
     comm_ids = []
     if not os.path.exists(commidfile):
-        pdb.pm()
         comm_ids = [float(i) for i in
             subprocess.check_output("cut -f 1 " + " ".join(ctlf) +
                                 " | sort | comm -1 -2  - " + hisdir + "trtid" +
@@ -160,9 +160,14 @@ def onectl(hisdir, trtname,trtfiles,drugid, calipername,
         np.savetxt(commidfile, comm_ids)
     else:
         comm_ids = np.loadtxt(commidfile)
-        
-    trt_to_exclude = sorted(set(his2ft.get_his_ids(trtfiles, coxfilt))
-                            | set(comm_ids))  
+    trt_to_exclude = []
+    trtexcl_file = hisdir + savename + ".trt_excl"
+    if not os.path.exists(trtexcl_file):        
+        trt_to_exclude = sorted(set(his2ft.get_his_ids(trtfiles, coxfilt))
+                            | set(comm_ids))
+        np.savetxt(trtexcl_file, trt_to_exclude,fmt="%d")
+    else:
+        trt_to_exclude = np.loadtxt(trtexcl_file,dtype=int)
     print(savename, " make trt remove:",len(trt_to_exclude),
           ' @{:2.2f}'.format((time.time() - t0)/60))            
     np.random.shuffle(ctlf)
@@ -189,36 +194,76 @@ def onectl(hisdir, trtname,trtfiles,drugid, calipername,
             ids.append(bindat[:,0])
         ## save IDs so that we can work with only patients in same bins
         ## NOTE: for TRT, need to filter out ppl with CTL-events
+        
         np.savetxt(hisdir + pair_allid + ".ids.ctl", np.hstack(ids)) 
-        np.savetxt(hisdir + pair_allid + ".ids.trt",
-                   np.array(list(set(np.loadtxt(hisdir + 'trtid' + str(drugid),dtype=int))-set(trt_to_exclude))))
+        np.savetxt(hisdir + pair_allid + ".ids.trt",np.array(list(set(np.loadtxt(hisdir + 'trtid' + str(drugid),dtype=int))-set(trt_to_exclude))))
 
     ## now prepare all data for PS:
     tx = time.time()
     his2ft.prepare_sparsemat2(hisdir,trtname, savename ,coxfilt,ctlf,
                            idfile=pair_allid)
     print("Finish sparsemat... @{:2.2f}".format((time.time() - tx)/60))            
-    alpha=[.0001,.001,.01]; l1=[.2,.3]    
+
     ### make propensity score of all & get PS scores
     tx = time.time()
     #pair_allid
-    ps.ctl_propensity_score(hisdir,trtname,savename, pair_allid + '.ids',
-                                        ['ago','sft'] if len(vocab2superft) > 0 else ['ago'], alphas=alpha, l1s=l1)
+
+    BIGNESS = 300000
+    NSAMP = 5
+    trtid = np.loadtxt(hisdir + pair_allid + ".ids.trt")
+    ctlid = np.loadtxt(hisdir + pair_allid + ".ids.ctl")
+    #pdb.set_trace()
+    if len(trtid) > 2*BIGNESS or len(ctlid) > 2*BIGNESS:
+        for i in range(NSAMP):
+            pair_allid_prefix = "PSM" + str(i)
+            pair_allid_samp = pair_allid_prefix + savename
+            if not os.path.exists(hisdir + pair_allid_samp + ".ids.trt"):
+                print('creating sample:' + hisdir + pair_allid_samp + ".ids.*")
+                if len(trtid) <= 2*BIGNESS:
+                    np.savetxt(hisdir + pair_allid_samp + ".ids.trt", trtid)
+                else:
+                    np.savetxt(hisdir + pair_allid_samp + ".ids.trt", np.random.choice(trtid, BIGNESS,False))
+                if len(ctlid) <= 2*BIGNESS:
+                    np.savetxt(hisdir + pair_allid_samp + ".ids.ctl", ctlid)
+                else:
+                    np.savetxt(hisdir + pair_allid_samp + ".ids.ctl", np.random.choice(ctlid, BIGNESS,False))
+            #pdb.set_trace()
+            tr = ps2match2ipw(hisdir, trtname,drugid, calipername,
+                              savename,  outcomes,trt_to_exclude,
+                              pair_allid_prefix=pair_allid_prefix,
+                        psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes)
+            times_record.update(tr)
+    else:
+        tr = ps2match2ipw(hisdir, trtname,drugid, calipername,
+                     savename,  outcomes,trt_to_exclude,
+                     psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes)
+        times_record.update(tr)        
+    return times_record
+def ps2match2ipw(hisdir, trtname,drugid, calipername,
+                 savename,  outcomes,trt_to_exclude,pair_allid_prefix="PSM",
+           psmatch=[],NN_pscaliper=[], vocab2superft={},hideous='', single_outcomes=False):
+    alpha=[.0001,.001,.01]; l1=[.2,.3]
+    tx = time.time()
+    ps.ctl_propensity_score(hisdir,trtname,savename,pair_allid_prefix + savename + '.ids', alphas=alpha, l1s=l1)
     print("Finish big ps... @{:2.2f}".format((time.time() - tx)/60))
-    times_record['bigps'] = (time.time() - tx)/60
+    times_record = {}
+    times_record[pair_allid_prefix + 'bigps'] = (time.time() - tx)/60
     #oorder = sorted(outcomes.keys())
     #outcomes = [outcomes[k] for k in oorder]
-    for psperc in psmatch:
-        tx = time.time()
-        ps_match.runctl_psmatch(hisdir, trtname, savename, drugid,trt_to_exclude, psperc, outcomes,alpha, l1, vocab2superft=vocab2superft, single_outcomes=single_outcomes) 
-        print("Finish psmatch... @{:2.2f}".format((time.time() - tx)/60))
-        times_record['psm' + str(psperc)] = (time.time() - tx)/60
+    #for psperc in psmatch:
+    tx = time.time()
+    ps_match.runctl_psmatch(hisdir, trtname, savename, drugid,trt_to_exclude, psmatch, outcomes,alpha, l1, vocab2superft=vocab2superft, single_outcomes=single_outcomes,do_ebm = False, pair_allid_prefix=pair_allid_prefix) 
+    print("Finish psmatch... @{:2.2f}".format((time.time() - tx)/60))
+    times_record[ pair_allid_prefix + 'psm'] = (time.time() - tx)/60
+    #times_record[ pair_allid_prefix + 'psm' + str(psperc)] = (time.time() - tx)/60
+    '''
     psmod = hisdir + "PSM" + savename + ".ids.psmod.pkl"
     for perc in NN_pscaliper:
         tx = time.time()
         nearest_neighbor.runctl(hisdir,trtname, savename, drugid, trt_to_exclude, calipername, outcomes, vocab2superft, psmatcher = psmod, psmatch_caliper=perc,hideous=hideous, single_outcomes = single_outcomes)
         print("Finish NNmatch... @{:2.2f}".format((time.time() - tx)/60))
         times_record['NN' + str(perc)] = (time.time() - tx)/60
+    '''
     return times_record
 
 

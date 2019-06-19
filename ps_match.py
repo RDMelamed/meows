@@ -29,11 +29,11 @@ def get_ps(modname):
     modsetting = settings[0] if len(settings) == 1 else psmod['xval'].mean(axis=1).idxmax() 
     return pd.Series(psmod['preds'][modsetting],index=psmod['ids'])
 
-def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, outcomes, alpha, l1, vocab2superft={},single_outcomes=True): ##comm_ids will be allready removed from ctl via first run
+def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, outcomes, alpha, l1, vocab2superft={},single_outcomes=True,pair_allid_prefix="PSM", do_ebm=True): ##comm_ids will be allready removed from ctl via first run
     #print("runctl:--",hisdir)
 
     
-    pair_allid = "PSM" + pairname
+    pair_allid = pair_allid_prefix + pairname
     #ctlbins = get_binned_ids(hisdir + savename + "binembeds.pytab")
     ### FIrst step: overall PS matching
     ##  - across all bins, get PS
@@ -43,10 +43,11 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
 
     #### this does the matching, given a PS (2 different PS constructions)
     #### then it gets the PS distr of the matched populations
+
     def match_eval(psmod, savename):
         osaves = [savename + "." + oname + ".ids" for oname in outcome_ord]
         ### match on PS
-        did_match = os.path.exists(hisdir + savename + ".ids.trt")
+        did_match = os.path.exists(hisdir + savename + "BLAH.ids.trt")
         nmatch = {}
         if not single_outcomes:
             did_match = True
@@ -56,11 +57,12 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
                     break
                 else:
                     nmatch[ix] = np.loadtxt(hisdir + osave + ".trt").shape[0]
-        #pdb.set_trace()
+
 
         if not did_match:
             matches = match_ps(hisdir, pairname, drugid,trtname, psmatch, psmod,
                                     outcome_ord, single_outcomes)
+            pdb.set_trace()                    
             if single_outcomes:
                 np.savetxt(hisdir + savename + ".ids.trt", matches[0])        
                 np.savetxt(hisdir + savename + ".ids.ctl", matches[1])
@@ -72,12 +74,12 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
 
                 del matches
 
-        ### now get PS -- for each outcome
-        #pdb.set_trace()        
-        ### for smallest outcome, do cross-validation:
+
         if single_outcomes:
             f, xval = ps.ctl_propensity_score(hisdir,trtname, pairname,savename + ".ids",alphas=alpha, l1s=l1)
         else:
+            ### now get PS -- for each outcome            
+            ### for smallest outcome, do cross-validation:
             smallest = pd.Series(nmatch).idxmin()
             f, xval = ps.ctl_propensity_score(hisdir,trtname, pairname,osaves[smallest],alphas=alpha, l1s=l1)
             x = xval.mean(axis=1).idxmax().split("-")
@@ -90,12 +92,13 @@ def runctl_psmatch(hisdir, trtname, pairname, drugid,trt_to_exclude, psmatch, ou
         
     ### "sparsematched"
     match_eval(get_ps(hisdir + pair_allid + ".ids.psmod.pkl"),
-               "PSM" + str(psmatch) + ".spm." + pairname)
+               pair_allid_prefix + str(psmatch) + ".spm." + pairname)
 
-    ### now, match on a PS of emb
-    match_eval(runctl_psmatch_emb(hisdir,trtname,pairname, drugid,
-                                  trt_to_exclude, pair_allid),
-               "PSM" + str(psmatch) + ".ebm." + pairname)
+    if do_ebm:
+        ### now, match on a PS of emb
+        match_eval(runctl_psmatch_emb(hisdir,trtname,pairname, drugid,
+                                      trt_to_exclude, pair_allid),
+                   pair_allid_prefix + str(psmatch) + ".ebm." + pairname)
         
 def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes, single_outcomes):
 
@@ -114,9 +117,13 @@ def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes, sing
     #pdb.set_trace()
     if not single_outcomes:
         tc_matches = {o:[[],[]] for o in range(len(ordered_outcomes))}
+    tbase = time.time()
+    BTS = {}
+    accBTS = {}    
     for binid in trtinfo['bindf']['binid']: # drugbins.walk_nodes("/","EArray"):
         if not "/" + binid in ctlbins:
             continue
+        ta = time.time()
         trt_compare, trtoutc = matching.binfo(trtinfo, binid)
         #if binid == 't412':
         #    pdb.set_trace()
@@ -143,14 +150,24 @@ def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes, sing
         ctldat = ctlbins.get_node("/" + binid)
         csel = np.isin(ctldat[:,0], scored_ids)
         ctlids = ctldat[:,0][csel]
-        if len(ctlids) != ctldat.shape[0]:
-            pdb.set_trace()
+        #if len(ctlids) != ctldat.shape[0]:
+        #    pdb.set_trace()
         ctldat = psmod.loc[ctlids]
+        accBTS[binid] = time.time() - ta
+        if (time.time() - ta) > 30:
+            pdb.set_trace()
 
+        t0 = time.time()
         tall,call = matching.one_bin_PSM(trt_compare,
                                          ctldat,
                                      caliper,binid)
-
+        
+        t1 = time.time()
+        BTS[binid] = t1 - t0
+        if (t1 - t0) > 30:
+            pdb.set_trace()
+        #if len(BTS) > 100:
+        #    break
         if single_outcomes:
             tc_matches[0] += tall
             tc_matches[1] += call            
@@ -178,9 +195,11 @@ def match_ps(hisdir,ctlfile, trt, trtname,psmatch, psmod, ordered_outcomes, sing
         if ix % 50 == 0:
             print('{:d} have {:d}\n'.format(ix,
                                             len(tc_matches[0]) if single_outcomes else len(tc_matches[0][0])))
-
+    BTS['tot'] = time.time() - tbase
     #pdb.set_trace()
-            
+    f = open("BTS.pkl",'wb')
+    pickle.dump(BTS, f)
+    f.close()
     return tc_matches
     #ctl_propensity_score(hisdir,name, ctlfile,outname)
 
@@ -272,8 +291,10 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
     #ntrt = np.loadtxt(hisdir + "PSM" + str(psmatch) + savename + ".ids.trt").shape[0]
 
     ### making weights: because we are doing partial_fit
-    ntrt = np.loadtxt(hisdir + idname + ".ids.trt").shape[0]    
-    nctl = np.loadtxt(hisdir + idname + ".ids.ctl").shape[0]
+    trtget = np.loadtxt(hisdir + idname + ".ids.trt") ### this would already have trt_to_exclude excluded
+    ntrt = trtget.shape[0]
+    ctlget = np.loadtxt(hisdir + idname + ".ids.ctl")
+    nctl = ctlget.shape[0]
     # class_weight = {int(i):tot_dat/(len(class_counts)*class_counts[i]) for i in class_counts}
     # sklearn doc: n_samples / (n_classes * np.bincount(y))
     class_weight = {i:(nctl + ntrt)/(2*ct) for i,ct in enumerate([nctl, ntrt])}
@@ -284,7 +305,8 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
         #trt_compare, ctldat, cutoff = match_in_bin.binfo(trtinfo, binid)
         node = trtinfo['drugbins'].get_node("/" + binid)
         ids = node[:,0]
-        sel = ~np.isin(ids,trt_to_exclude)
+        #sel = ~np.isin(ids,trt_to_exclude)
+        sel = np.isin(ids,trtget)        
         ids = ids[sel]
         if ids.shape[0] == 0:
             return None
@@ -294,6 +316,7 @@ def runctl_psmatch_emb(hisdir, trtname, savename, trt, trt_to_exclude,idname, al
         #trt_compare, trtoutc = matching.binfo(trtinfo, binid)
 
         ctldat = ctlbins.get_node("/" + binid)
+        ctldat = ctldat[:][np.isin(ctldat[:,0], ctlget),:]
         #ctldem = splinify([:,:6])
 
         ### compile together to return
