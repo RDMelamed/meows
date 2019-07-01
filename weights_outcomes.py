@@ -14,6 +14,7 @@ import his2ft
 import tables
 import matching
 import subprocess
+import file_names
 def get_mod(mod, whichdo=''):
     return whichdo if whichdo else (list(mod['preds'].keys())[0]
                                         if len(mod['preds'])==1
@@ -48,28 +49,33 @@ def omat(nodeinfo,omax):
         pdat.append(outs + [0]*(omax - ogot))
     return np.array(pdat) #pdat 
 
-def outcome_info(hisdir, pspref,trtname,drugid, ctlfile,outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True):
-    savepref = 'min-' if whichdo else ''    
-    outc_fnames = hisdir + pspref
+def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True):
+
+    #outc_fnames = hisdir + pspref
+    savepref = 'min-' if whichdo else ''                
     if single_outcomes:
-        if os.path.exists(savepref + outc_fnames + ".iptw"):
+        if os.path.exists(outc_fnames + ".iptw"):
             print("Exists, returning: " + savepref + outc_fnames + ".iptw")
             return
     else:
-        outc_fnames = {outc:hisdir + pspref  + "." + outc
+
+        outc_fnames = {outc:outc_fnames + savepref  + "." + outc
                    for outc in outcomes_sorted}
-        if os.path.exists(savepref + list(outc_fnames.values())[0] + ".iptw"):
-            print("Exists, returning: " + savepref + list(outc_fnames.values())[0] + ".iptw")
+        if os.path.exists(list(outc_fnames.values())[0] +savepref +  ".iptw"):
+            print("Exists, returning: " + list(outc_fnames.values())[0] +savepref +  ".iptw")
             return
 
-    trtinfo = his2ft.get_trt_info(hisdir + trtname, drugid)
-    ctlbins = tables.open_file(his2ft.gen_embname(hisdir, ctlfile) ,mode="r")
+    runname, trtname = file_names.get_trt_names(hisdir, drugid)
+    #ctlfile = file_names.get_savename(drugid, ctl)
+    pairname = runname + str(ctl)
+    trtinfo = his2ft.get_trt_info(trtname, drugid)
+    ctlbins = tables.open_file(his2ft.gen_embname(pairname) ,mode="r")
     num_out = len(outcomes_sorted)
     ipwm = {}
     towrite = {}
     
     if single_outcomes:
-        ipwm = ipw(pickle.load(open(hisdir + pspref + ".ids.psmod.pkl",'rb')),whichdo)
+        ipwm = ipw(pickle.load(open(outc_fnames + ".ids.psmod.pkl",'rb')),whichdo)
         towrite = pd.DataFrame()
     else:
         ipwm = {outc:ipw(pickle.load(open(outc_fnames[outc] + ".ids.psmod.pkl",'rb')),whichdo)
@@ -151,6 +157,9 @@ def outcome_info(hisdir, pspref,trtname,drugid, ctlfile,outcomes_sorted, trt_to_
                         outc_fnames)
     else:
         for outcome in outc_fnames:
+            
             write_outcome(towrite[outcome], outc_fnames[outcome])
-    subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + savepref + hisdir + " " +
-                    pspref + "." + " " + str(single_outcomes) ,shell=True)
+    #pdb.set_trace()            
+    print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes)            )
+    subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) ,shell=True)
+    #savepref + hisdir + " " + pspref + "." +

@@ -38,7 +38,9 @@ def out_exclude(trtcompare,trtoutc, ctlids, ctloutcomes):
 def binfo(trtinfo, binid):
     node = trtinfo['drugbins'].get_node("/" + binid)
     ids = node[:,0]
-    bindat = trtinfo['scaler'].transform(node[:,6:])
+    bindat = node[:,1]
+    if node.shape[1] > 6:
+        bindat = trtinfo['scaler'].transform(node[:,6:])
     trt_compare = pd.DataFrame(bindat,index=ids)      
     #outc = trtinfo['outcomes'].get_node("/" + binid)
     outc = trtinfo['drugbins'].get_node("/outcomes/" + binid)

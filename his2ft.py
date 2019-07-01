@@ -19,24 +19,22 @@ sys.path.append("../08.13_propeval/")
 import regr_sparse_dense as rsd
 import os
 import json
-def gen_embname(hisdir, savename,hideous=''):
-    return hisdir + savename + hideous + ".binembeds.pytab"
-def gen_outcname(hisdir, savename,hideous=''):
-    
-    return hisdir + savename + hideous + ".outcomes.pytab"
+import file_names
+def gen_embname(savename,hideous=''):
+    return savename + hideous + ".binembeds.pytab"
+def gen_outcname(savename,hideous=''):
+    return savename + hideous + ".outcomes.pytab"
 #### for now assume that ***trt*** fits into memory, comparison maybe not
 ###   -outcome_length = for treated and optional matched control
 ###   -remove = any elements in history that might be overly strong predictors you want to remove.
 ###   -filters = to filter out individual patient histories by: presence of element in history or demographics
 ###   -savename: creates files: <savename>.binembeds.pytab,bindf.pkl,sparse_index.pkl,scaler.pkl
 ###   -control_data: list of the files to match bins
-def bin_pats(hisdir, embmat, filters, todo_files, savename,
+def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
              is_trt=False, filtid=[], vi2groupi={},hideous=''):
-    if not hisdir.endswith("/"):
-        hisdir = hisdir + "/"
-    #if not savename.endswith("."):
-    #    savename = savename + "."
-    if os.path.exists(gen_embname(hisdir, savename,hideous)):
+
+    savename = savedir + (str(drugid) if not is_trt else "trt")    
+    if os.path.exists(gen_embname(savename,hideous)):
         return
 
     ##################
@@ -44,7 +42,7 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
     ### - get the bins using the predetermined dims
     ### - set up a file to save based on treated
     ##################
-    trtfile = hisdir + "trt"
+    #trtfile = hisdir + "trt"
     chunksize = 50000            
     def get_binner_bindf():
         if is_trt:
@@ -60,7 +58,7 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
             bindf, binner, dims = bin_match.get_coarsened_bins(demo, chunksize=chunksize)
             return bindf, binner, dims
         else:
-            trtfile = hisdir + ".".join(savename.split(".")[:-1]) + ".trt"
+            trtfile = savedir + 'trt' #hisdir + ".".join(savename.split(".")[:-1]) + ".trt"
             bindf = pd.read_pickle(trtfile + "bindf.pkl")
             dims = pd.read_pickle(trtfile + "bindims.pkl")            
             binner = bin_match.get_binner_func(dims, chunksize)
@@ -72,7 +70,7 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
 
     relevant_bins = set(bindf.index)
     bid2i = dict(zip(*tuple((bindf.index, bindf['binid']))))
-    drugbins = tables.open_file(gen_embname(hisdir, savename,hideous) ,mode="a")
+    drugbins = tables.open_file(gen_embname(savename,hideous) ,mode="a")
     #outcome_tab = tables.open_file(hisdir + savename+ "outcomes.pytab" ,mode="a")    
     tabcache = defaultdict(list)
     outcomecache = defaultdict(list)    
@@ -80,6 +78,7 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
     scaler = StandardScaler()
     print("capping bins at 50k!!!!")
     overflowlist = []
+    tmp = "tmp/" + savename.replace("/",".")
     def bin_write(onebin):
         binid = bid2i[onebin]
         #pdb.set_trace()        
@@ -99,8 +98,9 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
             for i in outcomecache[onebin]:
                 outcome_tab.get_node("/" + binid).append(list(i))
             '''
-            scaler.partial_fit(to_write[:,6:])  ###patid, drug, [4-d bin] = 6
-            with open("tmp/" + savename + binid,'a') as f:
+            if to_write.shape[1] > 6:
+                scaler.partial_fit(to_write[:,6:])  ###patid, drug, [4-d bin] = 6
+            with open(tmp + binid,'a') as f:
                 f.write("\n".join([json.dumps(i) for i in outcomecache[onebin]])+'\n')
         elif binid not in overflowlist:
             print("exceeded 50000 for " + binid)
@@ -156,8 +156,11 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
             x = x[:,x[0,:]!=0]
             weights = timefunc(x[1,:]) #np.exp(-1*(x[6,:])**2/360)
             x = np.vstack((x[0,:], weights))
-            bincontents.append([patid, drug] + bindemoi + nonbin_demoi + \
-                               list((embmat[x[0,:].astype(int),:].transpose()*x[1,:]).sum(axis=1)))
+            savelist = [patid, drug]
+            if embmat.shape[0] > 0:
+                savelist += bindemoi + nonbin_demoi + \
+                            list((embmat[x[0,:].astype(int),:].transpose()*x[1,:]).sum(axis=1))
+            bincontents.append(savelist)
             binoutcomes.append(outcome)
             ## above: embmat weighted by time (exponential decay)
             pdone += 1
@@ -189,9 +192,9 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
         #                           tables.Int32Atom(),expectedrows=nrow,chunkshape=nrow)
         vl = drugbins.create_vlarray(group, binid,
                                    tables.Int32Atom(),expectedrows=nrow,chunkshape=nrow)
-        for i in open("tmp/" + savename + binid):
+        for i in open(tmp + binid):
             vl.append(json.loads(i))
-        os.remove("tmp/" + savename + binid)
+        os.remove(tmp + binid)
     #outcome_tab.close()
     if not is_trt:
         print("Finishing control data!!! did:" + str(pdone))
@@ -205,19 +208,19 @@ def bin_pats(hisdir, embmat, filters, todo_files, savename,
     ctbinned = dict(zip(*tuple((bnames,ctbinned))))
     ctbinned = [0 if k not in ctbinned else ctbinned[k] for k in bindf['binid']]
     bindf['binnedct'] = ctbinned
-    bindf.to_pickle(hisdir + savename+ "bindf.pkl")    
+    bindf.to_pickle(savename+ "bindf.pkl")    
     drugbins.close()
     ct = pd.DataFrame(sparse_elements,index=['ct']).transpose()
     index =list(ct.loc[ct['ct'] > 100,:].index)
     #index = list((ct['ct'] > 100).index)
     sparse_index = index
-    f = open(hisdir +savename +"sparse_index.pkl",'wb')
+    f = open(savename +"sparse_index.pkl",'wb')
     pickle.dump((ct), f)
     f.close()
-    f = open(hisdir + savename+ hideous + "standardscaler.pkl",'wb')
+    f = open(savename+ hideous + "standardscaler.pkl",'wb')
     pickle.dump(scaler,f)
     f.close()
-    f = open(hisdir +savename +"bindims.pkl",'wb')
+    f = open(savename +"bindims.pkl",'wb')
     pickle.dump(bindims, f)
     f.close()
 
@@ -266,11 +269,6 @@ def align_to_sparseindex(x, sparse_index):
     mycol = np.where(np.isin(sparse_index, x[0,:]))[0]
     return x, mycol
 
-def get_sparse_index(hisdir, cut = 100):
-    elct = pickle.load(open(hisdir + "sparse_index.pkl",'rb'))
-    sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > cut,:].index)))
-    return sparse_index
-
 
 def make_dofilts(filters): #exclude=set([]), include=set([]), filt):    
     def dofilts(x, demo):
@@ -297,36 +295,38 @@ def make_dofilts(filters): #exclude=set([]), include=set([]), filt):
 def timefunc(b):
     return np.exp(-1*(b)**2/360)
 
-
 ##############################
 ## sparseindex_name = saved list of columns to use, made in the bin step
 ## outname = save teh results
 ## filters = elements in the vocab of the data that cause remove a patient (see make_dofilts)
 ## todo_files = files to become the rows of our matrices
 ## idfile = another filter, only keep IDs in these files, as when you are doing sparsemat to evaluate a matching
-def prepare_sparsemat2(hisdir, sparseindex_name, outname, filters,
-                       todo_files, idfile = '', hideous = ''
-                       ):
+def prepare_sparsemat2(hisdir, sparseindex_name, drugdo, filters,
+                       idfile = '', hideous = ''):
     
-    savename = hisdir + outname
-
-    if os.path.exists(savename + ".h5"):
+    savename = file_names.sparseh5_names(hisdir, drugdo) #hisdir + outname 
+    todo_files = file_names.todo_files(hisdir, drugdo)
+    if os.path.exists(savename):
         return
     save_size = 300000
     useids = []
     if idfile:
-        useids = set(np.loadtxt(hisdir + idfile+'.ids.trt')) | set(np.loadtxt(hisdir + idfile+'.ids.ctl')) 
+        useids = set(np.loadtxt(hisdir + idfile+'.ids.trt')) | set(np.loadtxt(hisdir + idfile+'.ids.ctl'))
+    VMAX = 30285
+    sparse_index = np.arange(1,VMAX+1)    
+    if sparseindex_name:
+        sparse_index = get_sparse_index(hisdir + sparseindex_name, cut=100)
+        #pdb.set_trace()
+        print("removing ZERO (invalid) from my feature set")
 
-    sparse_index = get_sparse_index(hisdir + sparseindex_name, cut=100)
-    #pdb.set_trace()
-    print("removing ZERO (invalid) from my feature set")
-
-    sparse_index = np.delete(sparse_index,0)
+        sparse_index = np.delete(sparse_index,0)
+    #else:
+    #    sparse_index = np.arange(1,vocab['vi'].max()+1)
     ncol = len(sparse_index)
     dofilts = make_dofilts(filters)
     dense = []
 
-    h5tab = tables.open_file(savename + ".h5", 'a') 
+    h5tab = tables.open_file(savename, 'a') 
     #densefile = savename +".den"
     rowlist = []
     collist = []
@@ -337,22 +337,24 @@ def prepare_sparsemat2(hisdir, sparseindex_name, outname, filters,
     def store_to(node_name):
         #if node_name < 2:
         #    pdb.set_trace()
+        name = 'c' + str(node_name)        
+        group = h5tab.create_group("/", 'c' + str(node_name), str(node_name))
         sp_store = sparse.csr_matrix((timedat,(rowlist,collist)),
                               shape=(r,len(sparse_index)))
-        name = 'c' + str(node_name)
+
         for attribute in ('data', 'indices', 'indptr', 'shape'):
-            full_name = f'{name}_{attribute}'
+            #full_name = f'{name}_{attribute}'
 
             # add nodes
             arr = np.array(getattr(sp_store, attribute))
             atom = tables.Atom.from_dtype(arr.dtype)
-            ds = h5tab.create_carray(h5tab.root, full_name, atom, arr.shape,
+            ds = h5tab.create_carray(group, attribute, atom, arr.shape,
                                      chunkshape = arr.shape)
             ds[:] = arr
         arr = np.array(dense)
         atom = tables.Atom.from_dtype(arr.dtype)
-        full_name = f'{name}_den'
-        ds = h5tab.create_carray(h5tab.root, full_name, atom, arr.shape)
+        #full_name = f'{name}_den'
+        ds = h5tab.create_carray(group, "den", atom, arr.shape)
         ds[:] = arr
 
     for fdo in todo_files:
@@ -424,6 +426,8 @@ def get_covmat(hisdir, trt,hideous=''):
     #bindf = tables.open_file(hisdir + "binembeds.pytab" ,mode="r")
     #pdb.set_trace()
     drugbins = tables.open_file(hisdir +hideous+ ".binembeds.pytab" ,mode="r")
+    if not hasattr(scaler,"mean_"):
+        return None
     nvar = scaler.mean_.shape[0]
     prodsums = np.zeros((nvar, nvar))
     varsums = np.zeros(nvar)
@@ -449,12 +453,13 @@ def get_covmat(hisdir, trt,hideous=''):
     di = np.tile(varsums,(nvar,1)) #np.diag(prodsums)
 
     covest = (prodsums - (di * di.transpose())/nrow)/nrow
-    return covest
+    prec = np.linalg.inv(covest)    
+    return prec
 binners=['urx','year','age']
 
 def get_trt_info(hisdir, trt, hideous=''):
-    covest = get_covmat(hisdir, trt,hideous)
-    prec = np.linalg.inv(covest)
+    prec = get_covmat(hisdir, trt,hideous)
+
     scaler = pd.read_pickle(hisdir +hideous + "standardscaler.pkl")    
     bindf = pd.read_pickle(hisdir + "bindf.pkl")
     bindf = bindf.loc[bindf['binnedct'] > 0,:]
@@ -474,7 +479,19 @@ def get_trt_info(hisdir, trt, hideous=''):
             'levels':levels,'drugbins':drugbins, 'trt':trt} #,'outcomes':outcomes} #
 
 
+TESTING =False
+#sbatch ../../code/matchweight/run_sparsmat.sh mixed_histories/ drug_neighbor_counts.pkl
+import multiprocessing as mp
+if __name__ == "__main__":
+    dirn = sys.argv[1]
+    druginfo = sys.argv[2]
+    todo = pd.read_pickle(druginfo)
+    todo = list(todo.loc[todo[0] > 20000, :].index)
+    if TESTING:
+        todo = [3512, 4747]
+    pool = mp.Pool(processes=11 if not TESTING else 2)        
+    res = [pool.apply_async(prepare_sparsemat2,
+                            args=(dirn, "", drug, {}))
+           for drug in todo]
+    results = [p.get() for p in res] ## do i need this?
 
-
-
-    

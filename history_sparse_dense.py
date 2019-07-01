@@ -189,8 +189,8 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
     print("With " + str(len(outcomes)) + " outcomes")
     #pref = 'ost'
     def getfname(it, drug):
-        fname = prefix + '/valid.' + str(name)+ '.'+ str(it) + ("." + str(drug) if drug > 0 else "")
-            
+        #fname = prefix + '/valid.' + str(name)+ '.'+ str(it) + ("." + str(drug) if drug > 0 else "")
+        fname = prefix + '/hisinfo.' + str(name)+ '.'+ str(it) 
         open(fname,'w').close()
         return fname
 
@@ -200,10 +200,13 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
     with open(logf,'a') as f:
         f.write('STart!' + name + ' ' + str(it) +'\n')
         
-
+    obs = ''
+    count = 0
+    '''
     obs = {0:''} if mix else defaultdict(str)
     count = {0:0} if mix else defaultdict(int)
     fname = {0:getfname(it,0)} if mix else defaultdict(str)
+    '''
     codesuffix = 'vi'
 
     tried = 0
@@ -239,9 +242,11 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
                 continue
             gots += 1
             drug = res[0][0]
-            res = [person] + res[1] + [-1] + res[0]
-            obs[drug] += stringify(res)
-            count[drug] += 1
+            res = [drug, person] + res[1] + [-1] + res[0]
+            obs  += stringify(res)
+            count += 1
+            #obs[drug] += stringify(res)
+            #count[drug] += 1
 
         #else:
         #    with open(logf,'a') as f:
@@ -257,7 +262,13 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
                 f.write('done ' + str(pdone) +
                         "time={:1.2f}min, mem={:1.2f}Gb".format((time.time()-t0)/60, memoryUse) + '\n') # + ' ' + list(fname.values())[0] +'\n')
         #if len(obs) > 50000:
-        
+        if count > 100000:
+            with open(getfname(it,0), 'a') as f:
+                f.write(obs)
+            obs = ''
+            count = 0
+            it += 1
+        '''
         for k in count:
             if not k in fname:
                 fname[k] = getfname(it, k)
@@ -269,10 +280,19 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
                 it += 1
                 fname[k] = getfname(it, k)
                 count[k] = 0
+        '''
+    #pdb.set_trace()
+    with open(getfname(it,0),'a') as f:
+        f.write(obs)
+        
+    print("tried:", tried, " got: " , gots)
 
-    print("tried:", tried, " got: " , gots)       
+    with open(logf,'a') as f:
+        f.write('Finished!' +str(name)  + " tried:" + str(it)+'\n')
+    '''        
     with open(logf,'a') as f:
         f.write('Finished!' + list(fname.values())[0] + " tried:" + str(it)+'\n')
+
     for k in count:
         if count[k] == 0: continue
         if not k in fname:
@@ -280,7 +300,7 @@ def historyloop(Q, doid, name, prefix, outcomes, mix=False):
         
         with open(fname[k] ,'a') as f:
             f.write(obs[k])
-
+    '''
 def enQminus(Q, doid, nprocs,ndo=0, samp=.1):
     i = 0
     d2f = {i:open(indexdir + str(d)) for i,d in enumerate(doid)}
@@ -348,3 +368,126 @@ if __name__=="__main__":
     #doid = [4047, 5610] ## warfarin, dabig
     main(doid, prefix, outcomes)
 
+def split(fdir, dname):
+    tosave = defaultdict(str)
+    ct = defaultdict(int)
+    x = glob.glob(fdir + "/hisinfo." + dname + ".*")[0]
+    print(x, os.path.basename(x).split(".")[2])
+    fis = {int(os.path.basename(i).split(".")[2]):i for i in glob.glob(fdir + "/hisinfo." + dname + ".*")}
+
+    for ix in np.arange(len(fis)):
+        print(fis[ix])
+        for line in open(fis[ix]):
+            line = line.strip().split("\t")
+            drug = line[0]
+            tosave[drug] += "\t".join(line[1:]) + "\n"
+            ct[drug] += 1
+            if ct[drug] > 5000:
+                with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                    f.write(tosave[drug])
+                ct[drug] = 0
+                tosave[drug] = ''
+                if TESTING:
+                    break
+        if TESTING:
+            break
+                
+    for drug, drugct in ct.items():
+        if drugct > 0:
+            with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                f.write(tosave[drug])
+            tosave[drug] = ''
+
+
+def split(fdir, dname):
+    tosave = defaultdict(str)
+    ct = defaultdict(int)
+    x = glob.glob(fdir + "/hisinfo." + dname + ".*")[0]
+    print(x, os.path.basename(x).split(".")[2])
+    fis = {int(os.path.basename(i).split(".")[2]):i for i in glob.glob(fdir + "/hisinfo." + dname + ".*")}
+
+    for ix in np.arange(len(fis)):
+        print(fis[ix])
+        for line in open(fis[ix]):
+            line = line.strip().split("\t")
+            drug = line[0]
+            tosave[drug] += "\t".join(line[1:]) + "\n"
+            ct[drug] += 1
+            if ct[drug] > 5000:
+                with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                    f.write(tosave[drug])
+                ct[drug] = 0
+                tosave[drug] = ''
+                if TESTING:
+                    break
+        if TESTING:
+            break
+                
+    for drug, drugct in ct.items():
+        if drugct > 0:
+            with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                f.write(tosave[drug])
+            tosave[drug] = ''
+
+
+def splitcat(fdir, dname):
+    tosave = defaultdict(str)
+    ct = defaultdict(int)
+    ix = 0
+    t0 = time.time()
+    for line in open(fdir + "hisinfo_cat." + str(dname)):
+        line = line.strip().split("\t")
+        drug = line[0]
+        tosave[drug] += "\t".join(line[1:]) + "\n"
+        ct[drug] += 1
+
+        if ct[drug] > 2000:
+            with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                f.write(tosave[drug])
+            ct[drug] = 0
+            tosave[drug] = ''
+            #if TESTING:
+            #    break
+        ix += 1            
+        if ix % 1000000 == 0:
+            pid = os.getpid()
+            py = psutil.Process(pid)
+            memoryUse = py.memory_info()[0]/2.**30  # memory use in GB...I think
+            #print('memory use:', memoryUse)                
+            print(str(dname) + ' done ' + str(ix) +
+                    "time={:1.2f}min, mem={:1.2f}Gb".format((time.time()-t0)/60, memoryUse) + '\n') # + ' ' + list(fname.values())[0] +'\n')
+        
+    for drug, drugct in ct.items():
+        if drugct > 0:
+            with open(fdir + "/split." + dname + "." + drug,'a') as f:
+                f.write(tosave[drug])
+            tosave[drug] = ''
+    print("finished ", dname)
+def postparse(fdir):
+    ndo = 1000 if TESTING else 0
+    nprocs = 2 if TESTING else 14
+    loadprocs = []
+    if TESTING:
+        split(fdir, str(0))
+        return
+    for i in range(nprocs):
+        loadprocs.append(mp.Process(target = splitcat,
+                                    args = (fdir, str(i))))
+        loadprocs[-1].start()
+    for p in loadprocs:
+        p.join()
+
+
+
+'''        
+missing = [3,4,5,7,10,13]
+loadprocs = []
+fdir = "mixed_histories/"
+for i in missing:
+    loadprocs.append(mp.Process(target = history_sparse_dense.splitcat,
+                                args = (fdir, str(i))))
+    loadprocs[-1].start()
+for p in loadprocs:
+    p.join()
+'''         
+        

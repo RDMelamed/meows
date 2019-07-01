@@ -15,6 +15,7 @@ import regression_splines as rs
 import scipy
 from sklearn.preprocessing import MaxAbsScaler
 from sklearn.metrics import roc_auc_score
+import file_names
 
 def get_sparse(pref, ftsuffix):
     sp = [sparse.load_npz(pref + ("" if ft =="ago" else "." + ft) + ".npz" )
@@ -56,57 +57,77 @@ def load_sparse_mat(name, filename='store.h5'):
     M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3])
     return M
 
-def load_chunk(trt_h5, tn, trt_useids):
-    node = trt_h5.get_node("/" + tn + "_den")
-    ids = node[:,0]
+def load_chunk(trt_h5, tn, trt_useids, sparse_index):
+    #node = trt_h5.get_node("/" + tn + "_den")
+    node = trt_h5.get_node("/" + tn )
+    #den = node.den
+    ids = node.den[:,0] #ids = node[:,0]
     sel = np.isin(ids, trt_useids)
     if sel.sum() == 0:
         return None
-    trt_dense = node[:][sel,:]
+    #trt_dense = node[:][sel,:]
+    trt_dense = node.den[:][sel,:]    
     attributes = []
     for attribute in ('data', 'indices', 'indptr', 'shape'):
-        attributes.append(getattr(trt_h5.root, "{:s}_{:s}".format(tn,attribute)).read())
-    M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3])[sel,:]
-    return trt_dense, M
+        #attributes.append(getattr(node, "{:s}_{:s}".format(tn,attribute)).read())
+        attributes.append(getattr(node, attribute).read())
+    M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3])
+    #sm = np.array((M > 0).sum(axis=0))[0,:][sparse_index-1]
+    M = M[sel,:][:,sparse_index - 1] ## subtract 1 because took out "zero", the column labels if we had them would start from 1
+    #M = sparse.csr_matrix(tuple(attributes[:3]), shape=attributes[3]).sum(axis=0)[sparse_index]
+    return trt_dense, M #, sm
 
 def chunk_list(trt_h5):
-    return [n.name.split("_")[0] for n in trt_h5.list_nodes(trt_h5.root)
-               if n.name.endswith("_data")]
+    return [i._v_name for i in trt_h5.walk_groups()][1:]
+    #return [n.name.split("_")[0] for n in trt_h5.list_nodes(trt_h5.root)
+    #           if n.name.endswith("_data")]
 
-def load_selected(trt_h5, trt_useids):
+def load_selected(trt_h5, trt_useids, sparse_index):
     trt_sparse = []
     trt_dense = []
+    #ftsum = np.zeros(30285) #sparse_index.shape[0])
     for tn in chunk_list(trt_h5):
-        d, s = load_chunk(trt_h5, tn, trt_useids)
+        d, s = load_chunk(trt_h5, tn, trt_useids, sparse_index)
         trt_dense.append(d)
         trt_sparse.append(s)
+        #ftsum += sm
+    #pdb.set_trace()
     return trt_dense, trt_sparse
                 
 ## hisdir = where all files are
 ## name = name of treated -> look for name+".den", name +".npz"
 ## ctlname = same as name but for ctl
 ## idfile = if you need to filter the IDs.  in some cases, the ids will exactly match what's in the feature files
-def ctl_propensity_score(hisdir, name, ctlname,idfile, ftsuffix=['ago'], transfunc=agobins,
+def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago'], transfunc=agobins,
                          save_prefix = '',
                          alphas=10**np.arange(-6.0,-2.0),l1s=[.3,.2],batch_test=False): #, eltfilter={}, demfilter={}):
     if len(ftsuffix) > 1:
         save_prefix += "-".join(ftsuffix)
 
-    fsave = hisdir + save_prefix + idfile + ".psmod.pkl" + ("BT" if batch_test else "")
+    fsave = idfile + ".psmod.pkl" + ("BT" if batch_test else "") # hisdir + save_prefix
     if os.path.exists(fsave):
         modpred = pickle.load(open(fsave,'rb'))
         return [fsave,modpred['xval']]
 
-    trt_useids = np.loadtxt(hisdir + idfile + ".trt")
-    ctl_useids = np.loadtxt(hisdir + idfile + ".ctl")
-    print("reading file:", hisdir + name)
-    trt_h5 = tables.open_file(hisdir + name + ".h5",'r')
-    ctl_h5 = tables.open_file(hisdir + ctlname + ".h5",'r')
+    #runname, trtname = file_names.get_trt_names(hisdir, trt_drugid)
+
+    trt_useids = np.loadtxt(idfile + ".trt")
+    ctl_useids = np.loadtxt(idfile + ".ctl")
+    print("reading file:",  idfile)
+    trt_h5 = tables.open_file(file_names.sparseh5_names(hisdir, trt_drugid),'r')
+    ctl_h5 = tables.open_file(file_names.sparseh5_names(hisdir, ctl_drugid),'r')
     modpred = {}
+    #sparse_index = file_names.get_sparse_index(hisdir, trtid)
+    elct = pickle.load(open(file_names.sparse_index_name(hisdir, trt_drugid),'rb'))
+    SPFT_CUT = 100
+    sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
+                           dtype = int)
+    sparse_index = np.delete(sparse_index,0)
+    
     #print("ALWAYS BATCH")
     if batch_test or len(trt_useids) + len(ctl_useids) < 1500000: #200000000: #150: #
-        trt_dense, trt_sparse = load_selected(trt_h5, trt_useids)
-        ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids)
+        trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
+        ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
         trt_dense = np.vstack(trt_dense)
         ctl_dense = np.vstack(ctl_dense)
         dense = np.vstack((trt_dense, ctl_dense))

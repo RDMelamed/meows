@@ -16,10 +16,11 @@ weightedest <- function(weightdat, weighted=T){
         return( c(coef(sfit3), SE(sfit3)['lab']) )
 }
 
-xval <- function(pref,pattern,weighted=T){
+xval <- function(pattern,weighted=T){
     cat("coxeff ",pattern,"\n")
                                         #cat("making df:",ncol(outcAll)-3)
-    todo = list.files(pref,pattern=paste(pattern,".*.iptw$",sep=""))
+    todo = list.files(dirname(pattern), pattern=paste(basename(pattern),".*.iptw$",sep=""))
+    #todo = list.files(pref,pattern=paste(pattern,".*.iptw$",sep=""))
     outcomes = gsub(".iptw","",gsub(pattern,"",todo,fixed=T),fixed=T)
     est = data.frame(matrix(nrow=length(outcomes),ncol=4))
     dimnames(est) = list(outcomes, c("surv","survse","N","events"))
@@ -39,12 +40,13 @@ xval <- function(pref,pattern,weighted=T){
     #e = data.frame(e=exp(est$surv), l=exp(est$surv - 1.96*est$survse), u=exp(est$surv + 1.96*est$survse))
     }
 
-singleoutcome <- function(pref, pattern,weighted=T){
-    wtout = read.table(paste(pref,pattern,"iptw",sep=""),sep="\t",header=T) #,row.names=0)
+singleoutcome <- function(pattern,weighted=T){
+    wtout = read.table(paste(pattern,"iptw",sep="."),sep="\t",header=T) #,row.names=0)
     outcomes = colnames(wtout)[5:ncol(wtout)]
     est = data.frame(matrix(nrow=length(outcomes),ncol=4))
     dimnames(est) = list(c(outcomes), c("surv","survse","N","events"))
-    outfile = paste(pref,ifelse(weighted,"","unwt."),pattern,"eff",sep="")
+    outfile = paste(pattern,ifelse(weighted,"",".unwt"),".eff",sep="")
+    cat(outfile)
     cat(dim(est))
     outix = 1
     for (outc in outcomes){
