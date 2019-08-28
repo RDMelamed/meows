@@ -87,7 +87,10 @@ def load_selected(trt_h5, trt_useids, sparse_index):
     trt_dense = []
     #ftsum = np.zeros(30285) #sparse_index.shape[0])
     for tn in chunk_list(trt_h5):
-        d, s = load_chunk(trt_h5, tn, trt_useids, sparse_index)
+        d = load_chunk(trt_h5, tn, trt_useids, sparse_index)
+        if not d:
+            continue
+        d, s = d
         trt_dense.append(d)
         trt_sparse.append(s)
         #ftsum += sm
@@ -99,12 +102,16 @@ def load_selected(trt_h5, trt_useids, sparse_index):
 ## ctlname = same as name but for ctl
 ## idfile = if you need to filter the IDs.  in some cases, the ids will exactly match what's in the feature files
 def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago'], transfunc=agobins,
-                         save_prefix = '',
-                         alphas=10**np.arange(-6.0,-2.0),l1s=[.3,.2],batch_test=False): #, eltfilter={}, demfilter={}):
+                         save_prefix = '',ft_exclude=[],
+                         alphas=10**np.arange(-6.0,-2.0),l1s=[.3,.2],batch_test=False,index_in = ''): #, eltfilter={}, demfilter={}):
     if len(ftsuffix) > 1:
         save_prefix += "-".join(ftsuffix)
 
+
     fsave = idfile + ".psmod.pkl" + ("BT" if batch_test else "") # hisdir + save_prefix
+    if index_in:
+        fsave = fsave.replace("ids.psmod",index_in + ".ids.psmod")
+
     if os.path.exists(fsave):
         modpred = pickle.load(open(fsave,'rb'))
         return [fsave,modpred['xval']]
@@ -113,7 +120,11 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
 
     trt_useids = np.loadtxt(idfile + ".trt")
     ctl_useids = np.loadtxt(idfile + ".ctl")
+    if len(trt_useids) + len(ctl_useids) < 100:
+        print("Aborting ps... < 100 ids",idfile)
+        return "", 0
     print("reading file:",  idfile)
+    #pdb.set_trace()
     trt_h5 = tables.open_file(file_names.sparseh5_names(hisdir, trt_drugid),'r')
     ctl_h5 = tables.open_file(file_names.sparseh5_names(hisdir, ctl_drugid),'r')
     modpred = {}
@@ -122,32 +133,44 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
     SPFT_CUT = 100
     sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
                            dtype = int)
+    if sparse_index.shape[0] == 0:
+        sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > 10,:].index)),
+                           dtype = int)
+        
     sparse_index = np.delete(sparse_index,0)
-    
+    if index_in:
+        pdb.set_trace()
+        for i in ['.trt','.ctl']:
+            os.symlink(os.path.basename(idfile + i), idfile.replace(".ids","."+ index_in +".ids" )+i)
+        sparse_index = np.loadtxt(index_in)
+    sparse_index = sparse_index[~np.isin(sparse_index, ft_exclude)]
+
     #print("ALWAYS BATCH")
-    if batch_test or len(trt_useids) + len(ctl_useids) < 1500000: #200000000: #150: #
-        trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
-        ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
-        trt_dense = np.vstack(trt_dense)
-        ctl_dense = np.vstack(ctl_dense)
-        dense = np.vstack((trt_dense, ctl_dense))
-        lab = np.hstack((np.ones(trt_dense.shape[0]),np.zeros(ctl_dense.shape[0])))
-        del trt_dense, ctl_dense
-        ids = dense[:,0]
-        dense = dense[:,1:]
-        hisft = sparse.vstack(trt_sparse+ ctl_sparse,format='csr')
-        del trt_sparse, ctl_sparse
-        if transfunc:
-            hisft = transfunc(hisft)
-        keep = np.array((hisft > 0).sum(axis=0))[0,:]
-        keep = (keep > 100) & (keep < .7*hisft.shape[0])
-        if (~keep).sum() > 0:
-            hisft = hisft[:,keep]
-            print("FILTERING ultrasparse:",(~keep).sum(), "->",hisft.shape, ' for ', fsave )
-        modpred = featlab2modpred(dense, hisft, lab, alphas, l1s)
-        modpred['ids'] = ids
-    else:
-        modpred = batch_ps(trt_h5, trt_useids, ctl_h5, ctl_useids,transfunc,alphas,l1s)
+
+    trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
+    ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
+    trt_dense = np.vstack(trt_dense)
+    ctl_dense = np.vstack(ctl_dense)
+    dense = np.vstack((trt_dense, ctl_dense))
+    lab = np.hstack((np.ones(trt_dense.shape[0]),np.zeros(ctl_dense.shape[0])))
+    del trt_dense, ctl_dense
+    ids = dense[:,0]
+    dense = dense[:,1:]
+    hisft = sparse.vstack(trt_sparse+ ctl_sparse,format='csr')
+    del trt_sparse, ctl_sparse
+    if transfunc:
+        hisft = transfunc(hisft)
+    keep = np.array((hisft > 0).sum(axis=0))[0,:]
+    keep = (keep > 100) & (keep < .7*hisft.shape[0])
+
+    if (~keep).sum() > 0:
+        hisft = hisft[:,keep]
+        print("FILTERING ultrasparse:",(~keep).sum(), "->",hisft.shape, ' for ', fsave )
+    modpred = featlab2modpred(dense, hisft, lab, alphas, l1s)
+    modpred['ids'] = ids
+    #if batch_test or len(trt_useids) + len(ctl_useids) < 1500000: #200000000: #150: #        
+    #else:
+    #    modpred = batch_ps(trt_h5, trt_useids, ctl_h5, ctl_useids,transfunc,alphas,l1s)
     f = open(fsave,'wb')
     pickle.dump(modpred,f)
     f.close()

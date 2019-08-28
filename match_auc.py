@@ -4,7 +4,6 @@ import sys
 import numpy as np
 import pickle
 import pdb
-import tables
 import subprocess
 import glob
 import os

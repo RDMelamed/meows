@@ -16,8 +16,6 @@ def get_pair_name(hisdir, drugid,ctl):
 
 def sparseh5_names(hisdir, drugid):
     spdir = hisdir + "/sparsemat/"
-    if not os.path.exists(spdir):
-        os.mkdir(spdir)
     return spdir + str(drugid) + ".h5"
 
 def todo_files(hisdir, drugid):

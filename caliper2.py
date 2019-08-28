@@ -14,20 +14,20 @@ from scipy.spatial.distance import mahalanobis
 import his2ft
 import os
 import ps_match
-
-def caliperdict(hisdir, trt,median=True, percentile=90,redo=None,psmod="",hideous=''):
+import file_names
+def caliperdict(trtname, trt,median=True, percentile=90,redo=None,hideous=''):
     if percentile == 0:
         return None
-    fname = hisdir + hideous + ".caliper." + \
+    #savedir, trtname = file_names.get_trt_names(hisdir, trt)
+    fname = trtname + hideous + ".caliper." + \
              ("median" if median else "perc") + str(percentile) + ".pkl"
     if os.path.exists(fname): return
     print("making caliper:", fname)
-    trtinfo = his2ft.get_trt_info(hisdir, trt,hideous)
+    trtinfo = his2ft.get_trt_info(trtname, trt,hideous)
     
     cuts = defaultdict(float) #pd.DataFrame(np.zeros(bindf.shape[0]),index=bindf['binid'])
     if redo:
         cuts = redo
-    psmod = [] if not psmod else ps_match2.get_ps(psmod)
     for (i,binid) in enumerate(trtinfo['bindf']['binid']):
         #if binid=='t15':
         #    pdb.set_trace()
@@ -96,7 +96,15 @@ def get_caliper(trt_compare, trtinfo, binid, median, percentile):
         return trtdist.apply(lambda q: np.percentile(q[~pd.isnull(q)],percentile), axis=1).median()
     else:
         return np.percentile(trtdist.stack(), percentile)
-
+def percentile_pscaliper(trt_compare, psk, psvar):
+    if trt_compare.shape[0] > 1:
+        #pdb.set_trace()
+        other_treated = np.tile(trt_compare.transpose(),
+                            (trt_compare.shape[0],1)).transpose()
+        bin_caliper[psk] = np.percentile(np.abs(pd_helper.upper_tri(trt_compare.values - other_treated)),psk)
+    else:
+        bin_caliper[psk] = psmod.var()
+    
 def ps_caliper(trt_compare, trtinfo, binid, median, percentile, psmod):
     looking_for = 30
     trtps = psmod.loc[trt_compare.index]
@@ -122,7 +130,7 @@ def ps_caliper(trt_compare, trtinfo, binid, median, percentile, psmod):
     if median and trt_compare.shape[0]>2:
         #pdb.set_trace()
         #return dists.apply(lambda q: np.percentile(q[q!=0], percentile)).median()
-        return np.median(np.apply_along_axis(lambda q: np.percentile(q[q!=0], 95), 0, dists))
+        return np.median(np.apply_along_axis(lambda q: np.percentile(q[q!=0], percentile), 0, dists))
     else:
         dists2 = np.where(dists==0, np.float('NaN'),dists).reshape(-1,1)
         #pdb.set_trace()

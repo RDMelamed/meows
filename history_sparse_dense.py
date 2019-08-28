@@ -102,11 +102,11 @@ def get_elements_weights(elwk, wmax):
     numelt = float(hist.shape[0])
     if numelt == 0:
         return [[], [], 0]
-    histfre = hist[ hist[:,1]<=52,:]
     uhist = hist[np.unique(hist[:,0],return_index=True)[1],:]
-    return [list(uhist[:,0]), list(uhist[:,1]), numelt]
+    return [list(uhist[:,0]), list(uhist[:,1]), numelt] #float(hist[ hist[:,1]<=52,:].shape[0])
     
     '''
+    histfre = hist[ hist[:,1]<=52,:]
     cv = {}
     if histfre.shape[0] > 0:
         cuts = np.arange(0,52,4)

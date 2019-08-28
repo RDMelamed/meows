@@ -13,15 +13,19 @@ import ps_match
 import weights_outcomes
 import ps
 from matching import *
-def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vocab2superft={}, psmatcher='',psmatch_caliper=95, hideous='',single_outcomes=False):
+import file_names
+#trtname, savename
+def runctl(hisdir, ctl, drugid, filt_trt, calipername, outcomes, idfile_name, vocab2superft={}, psmatch_caliper=95, hideous='',single_outcomes=True): #psmatcher='',
     #his2ft.bin_pats(hisdir,emb50,coxfilt,ctlf, savename, filtid = comm_trt_ctl)
     #tables.file._open_files.close_all()
-    outcomes = sorted(outcomes.keys())
+
+    #outcomes = sorted(outcomes.keys())
     ## match based on embed vectors in the bins
-    print(savename, " did matching...")
+
     ## matchname will be same as savename UNLESS we are doing PSmatch then savename.PSfilt
 
-    matchname, matchcounts = matchctl(hisdir, savename,drugid,trtname,calipername, filt_trt, outcomes, ps_matcher=psmatcher,pscaliper=psmatch_caliper, hideous=hideous, single_outcomes=single_outcomes)
+    matchname, matchcounts = matchctl(hisdir, ctl,drugid,idfile_name,calipername, outcomes, pscaliper=psmatch_caliper, hideous=hideous, single_outcomes=single_outcomes) #ps_matcher=psmatcher,
+    print(matchname, " did matching...")    
     '''    
     tids = set([])
     cids = set([])    
@@ -41,8 +45,9 @@ def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vo
                            idfile=matchname + ".union", vocab2superft=vocab2superft)
     '''
     alpha=[.0001,.001,.01]; l1=[.2,.3]
+    #pdb.set_trace()
     if single_outcomes:
-        f, xval = ps.ctl_propensity_score(hisdir,trtname,savename,
+        f, xval = ps.ctl_propensity_score(hisdir,drugid, ctl, 
                                       matchname + ".ids",alphas=alpha, l1s=l1)
     else:
         smallest = pd.Series(matchcounts).idxmin()
@@ -57,40 +62,43 @@ def runctl(hisdir, trtname, savename,drugid, filt_trt, calipername, outcomes, vo
         #("" if not transfunc else "." + transfunc.__name__)
         for o in outcomes:
             r = ps.ctl_propensity_score(hisdir,trtname, savename, matchname + "." + o + '.ids',alphas=alph_do, l1s=ls_do)
-    weights_outcomes.outcome_info(hisdir, matchname, trtname, drugid, savename, outcomes, filt_trt, single_outcomes=single_outcomes)
+    weights_outcomes.outcome_info(hisdir, matchname, drugid, ctl, outcomes, filt_trt, single_outcomes=single_outcomes)
 
 #def get_binned_ids(tabfile):
 #    return ids
 
 import time
-def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcomes,
-             ps_matcher='',pscaliper=95,hideous='', single_outcomes=False):
-    savename = ('NNPSfilt' + str(pscaliper) if ps_matcher else 'NN')+ hideous + "." + ctlfile
+# filt_trt, removing "filt_trt" because we are now only doing selected ids...
+def matchctl(hisdir,ctl, drugid, idfile_name, calipername,ordered_outcomes,
+             pscaliper=95,hideous='', single_outcomes=False): #ps_matcher='',
+
+    runname, trtname = file_names.get_trt_names(hisdir, drugid)
+    pairname = runname + str(ctl)
+    savename = ".".join([pairname, idfile_name, "NN"+ hideous, calipername, str(pscaliper)])    
+    #savename = ('NNPSfilt' + str(pscaliper) if ps_matcher else 'NN')+ hideous + "." + ctlfile
     did_match = True
     counts = {}
-    if not single_outcomes:
-        did_match = os.path.exists(hisdir + savename + ".ids.trt")
+    #pdb.set_trace()
+    if single_outcomes:
+        did_match = os.path.exists(savename + ".ids.trt")
     else:
         for ix, osave in enumerate(ordered_outcomes):
-            if not os.path.exists(hisdir + savename + "." + osave + ".ids.trt"):
+            if not os.path.exists(savename + "." + osave + ".ids.trt"):
                 did_match = False
                 break
             else:
-                counts[ix] = np.loadtxt(hisdir + savename + "." + osave + ".ids.trt").shape[0]
+                counts[ix] = np.loadtxt(savename + "." + osave + ".ids.trt").shape[0]
     if did_match:
         return savename, counts
-    print("hi!")
-    #print("WARNING ONLY DOING ACUTE RENAL FAILURE FIXXX 2 places BELOOOOOW")
-    trtinfo = his2ft.get_trt_info(hisdir + trtname, trt,hideous)
-    ctlbins = tables.open_file(his2ft.gen_embname(hisdir, ctlfile,hideous=hideous) ,mode="r")
-    #ctlbins = tables.open_file(gen_embname(hisdir, ctlfile) ,mode="r")
-    #ctloutcomes = tables.open_file(his2ft.gen_outcname(hisdir, ctlfile,hideous=hideous) ,mode="r")
-    #ctloutcomes = tables.open_file(gen_outcname(hisdir, ctlfile) ,mode="r")
-    print("using caliper:",hisdir + trtname + hideous +".caliper." + calipername + ".pkl")
-    embcaliper = pickle.load(open(hisdir + trtname + hideous +".caliper." + calipername + ".pkl",'rb'))
+    trtinfo = his2ft.get_trt_info(trtname, drugid,hideous)
+    ctlbins = tables.open_file(his2ft.gen_embname(pairname,hideous=hideous) ,mode="r")
+    print("using caliper:",trtname + hideous +".caliper." + calipername + ".pkl")
+    embcaliper = pickle.load(open(trtname + hideous +".caliper." + calipername + ".pkl",'rb'))
     #psmod = [] if not ps_matcher else ps_match.get_ps(ps_matcher)
-    psmod = ps_match.get_ps(ps_matcher)
-        
+    psmod = ps_match.get_ps(file_names.get_ps_file(pairname, idfile_name))
+    ps_var = psmod.var()    
+    bin_caliper = pscaliper*ps_var
+    scored_ids = psmod.index        
     looking_for = 30
     TRTID = []
     CTLID = []
@@ -105,15 +113,21 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
             continue
         trt_compare, trtoutc = binfo(trtinfo, binid)
         #PS caliper!
-
-        trtoutc = trtoutc[~trt_compare.index.isin(filt_trt)]
-        trt_compare = trt_compare.loc[~trt_compare.index.isin(filt_trt),:]
+        tsel = np.isin(trt_compare.index,scored_ids)
+        trtoutc = trtoutc[tsel] #~trt_compare.index.isin(filt_trt)]
+        trt_compare = trt_compare.loc[tsel,:] #~trt_compare.index.isin(filt_trt),:]
         if trt_compare.shape[0] == 0:
             continue
         
         ctldat = ctlbins.get_node("/" + binid)
         ctlids = ctldat[:,0]
-        ctldat = pd.DataFrame(trtinfo['scaler'].transform(ctldat[:,6:]),index=ctlids)
+        csel = np.isin(ctldat[:,0], scored_ids)
+        ctlids = ctldat[:,0][csel]
+        ctldat = ctldat[:,6:][csel,:]
+        if ctldat.shape[0] == 0:
+            continue
+        ctldat = pd.DataFrame(trtinfo['scaler'].transform(ctldat),index=ctlids)
+        
         #ctloutcom = ctloutcomes.get_node("/" + binid)
         #to_exclude = out_exclude(trt_compare, trtoutc, ctlids, ctloutcomes, binid)
         #ctloutc_bin = 
@@ -128,7 +142,7 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
         '''
         embcutoff = embcaliper[binid] #if len(caliper) > 0 else 0        
         pscutoff = caliper.ps_caliper(trt_compare, trtinfo, binid,True,pscaliper,psmod)
-
+        #pscutoff = caliper.percentile_pscaliper(trt_compare,pscutoff, psvar)
         tmatch_all, cmatch_all = one_bin_NN_pscaliper(trt_compare, ctldat,
                                             embcutoff, pscutoff,
                                             trtinfo['prec'],psmod)
@@ -164,12 +178,12 @@ def matchctl(hisdir,ctlfile, trt, trtname, calipername, filt_trt, ordered_outcom
     #pdb.set_trace()
     counts = {}
     if single_outcomes:
-        np.savetxt(hisdir + savename + ".ids.trt", tc_matches[0])
-        np.savetxt(hisdir + savename + ".ids.ctl", tc_matches[1])
+        np.savetxt(savename + ".ids.trt", tc_matches[0])
+        np.savetxt(savename + ".ids.ctl", tc_matches[1])
     else:
         for ix, oname in enumerate(ordered_outcomes):
-            np.savetxt(hisdir + savename + "." + oname + ".ids.trt", tc_matches[ix][0])
-            np.savetxt(hisdir + savename + "." + oname + ".ids.ctl", tc_matches[ix][1])
+            np.savetxt(savename + "." + oname + ".ids.trt", tc_matches[ix][0])
+            np.savetxt(savename + "." + oname + ".ids.ctl", tc_matches[ix][1])
             counts[ix] = len(tc_matches[ix][1])
 
     return savename, counts

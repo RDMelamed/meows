@@ -41,6 +41,7 @@ xval <- function(pattern,weighted=T){
     }
 
 singleoutcome <- function(pattern,weighted=T){
+    
     wtout = read.table(paste(pattern,"iptw",sep="."),sep="\t",header=T) #,row.names=0)
     outcomes = colnames(wtout)[5:ncol(wtout)]
     est = data.frame(matrix(nrow=length(outcomes),ncol=4))

@@ -31,12 +31,14 @@ def gen_outcname(savename,hideous=''):
 ###   -savename: creates files: <savename>.binembeds.pytab,bindf.pkl,sparse_index.pkl,scaler.pkl
 ###   -control_data: list of the files to match bins
 def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
-             is_trt=False, filtid=[], vi2groupi={},hideous=''):
+             is_trt=False, filtid=[], vi2groupi={},hideous='',featweights='', weightmode='N'):
 
-    savename = savedir + (str(drugid) if not is_trt else "trt")    
-    if os.path.exists(gen_embname(savename,hideous)):
+    savename = savedir + (str(drugid) if not is_trt else "trt")
+
+    namesuff = hideous + featweights + weightmode
+    if os.path.exists(gen_embname(savename,namesuff)):
         return
-
+    print('making: ',gen_embname(savename,namesuff))
     ##################
     ### first, go through the target "treated" (trt)
     ### - get the bins using the predetermined dims
@@ -70,7 +72,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
 
     relevant_bins = set(bindf.index)
     bid2i = dict(zip(*tuple((bindf.index, bindf['binid']))))
-    drugbins = tables.open_file(gen_embname(savename,hideous) ,mode="a")
+    drugbins = tables.open_file(gen_embname(savename,namesuff) ,mode="a")
     #outcome_tab = tables.open_file(hisdir + savename+ "outcomes.pytab" ,mode="a")    
     tabcache = defaultdict(list)
     outcomecache = defaultdict(list)    
@@ -78,7 +80,13 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     scaler = StandardScaler()
     print("capping bins at 50k!!!!")
     overflowlist = []
-    tmp = "tmp/" + savename.replace("/",".")
+    tmp = "tmp/" + savename.replace("/",".") + namesuff
+    featweights_mat = np.zeros(0)
+    if featweights:
+        featweights_mat = pd.read_csv(featweights,header=None,index_col=0,names=['id','coef'])
+        if weightmode == 'P':
+            featweights_mat = featweights_mat[featweights_mat['coef'] > 0]
+        featweights_mat = featweights_mat.abs()/featweights_mat.abs().sum()
     def bin_write(onebin):
         binid = bid2i[onebin]
         #pdb.set_trace()        
@@ -89,6 +97,8 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
                              shape=(0, ncol),
                          chunkshape=(50, ncol))
             #outcome_tab.create_vlarray(outcome_tab.root, binid, tables.Int32Atom())
+        #pdb.set_trace()
+        
         if drugbins.get_node("/" + binid).shape[0] < 50000:
             to_write = np.vstack(tabcache[onebin])
             drugbins.get_node("/" + binid).append(to_write)
@@ -101,7 +111,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
             if to_write.shape[1] > 6:
                 scaler.partial_fit(to_write[:,6:])  ###patid, drug, [4-d bin] = 6
             with open(tmp + binid,'a') as f:
-                f.write("\n".join([json.dumps(i) for i in outcomecache[onebin]])+'\n')
+                f.write("\n".join([json.dumps(list(i)) for i in outcomecache[onebin]])+'\n')
         elif binid not in overflowlist:
             print("exceeded 50000 for " + binid)
             overflowlist.append(binid)
@@ -113,6 +123,8 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
         bindemo = pd.DataFrame(bindemo,columns=['week','age','gender','urx'])
         bincontents = np.array(bincontents)
         binoutcomes = np.array(binoutcomes)
+        #if not isinstance(binoutcomes[0], list):
+        #    binoutcomes[0][0] = 
         binchunk = binner(bindemo)
         groups = binchunk.groupby(bindf.index.names)
         chunk_d0_bins = relevant_bins & set(groups.groups.keys())
@@ -136,7 +148,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     ### - parse rows
     ### - store in cache & write to pytables file
     ##################    ctloutcome_length=0,
-    #pdb.set_trace()
+
     for fdo in todo_files:
         bindemo = []; bincontents = []; binoutcomes = []
         print(fdo)
@@ -154,14 +166,34 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
             ## save: <bin label info>: week, age, gender, urx
             ##       <bin contents>: id, drug, bin info, non-bin demo, emb
             x = x[:,x[0,:]!=0]
-            weights = timefunc(x[1,:]) #np.exp(-1*(x[6,:])**2/360)
+            wid = 50
+            times = x[1,:]
+            weights = np.exp(-1*(times)**2/wid)
+
+                
+            #weights = timefunc(x[1,:]) #np.exp(-1*(x[6,:])**2/360)
             x = np.vstack((x[0,:], weights))
+            if featweights:
+                ftsel = np.isin(x[0,:],featweights_mat.index)
+                x = x[:,ftsel]
+                canccoef = featweights_mat.loc[x[0,:],'coef'].values
+                if weightmode=='WA':
+                    x[1,:] = np.multiply(x[1,:], canccoef)
+                if weightmode=='WT':
+                    times = times[ftsel]
+                    for tu in set(times):
+                        timeco = canccoef[times==tu]
+                        x[1,times==tu] = np.multiply(x[1,times==tu], timeco/timeco.max())
             savelist = [patid, drug]
+            #if patid==3358822:
+            #    pdb.set_trace()
             if embmat.shape[0] > 0:
                 savelist += bindemoi + nonbin_demoi + \
-                            list((embmat[x[0,:].astype(int),:].transpose()*x[1,:]).sum(axis=1))
+                            list((embmat[x[0,:].astype(int),:].transpose()*x[1,:]/(x[1,:].sum()+10**-6)).sum(axis=1))
             bincontents.append(savelist)
+            #pdb.set_trace()
             binoutcomes.append(outcome)
+            
             ## above: embmat weighted by time (exponential decay)
             pdone += 1
 
@@ -217,7 +249,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     f = open(savename +"sparse_index.pkl",'wb')
     pickle.dump((ct), f)
     f.close()
-    f = open(savename+ hideous + "standardscaler.pkl",'wb')
+    f = open(savename+ namesuff + "standardscaler.pkl",'wb')
     pickle.dump(scaler,f)
     f.close()
     f = open(savename +"bindims.pkl",'wb')
@@ -421,7 +453,7 @@ def outcome_info(hisdir, outname, noutcomes,
         np.savetxt(f, np.array(outcomelist), delimiter="\t")                
     return savename
 
-def get_covmat(hisdir, trt,hideous=''):
+def get_covmat(hisdir, trt,hideous='',noscale=False):
     scaler =pickle.load(open(hisdir +hideous+ "standardscaler.pkl",'rb'))
     #bindf = tables.open_file(hisdir + "binembeds.pytab" ,mode="r")
     #pdb.set_trace()
@@ -438,13 +470,16 @@ def get_covmat(hisdir, trt,hideous=''):
     #for bin in drugbins:
     nrow = 0
     #pdb.set_trace()
+    print("noscale",noscale)
     for bindat in drugbins.walk_nodes("/","EArray"):
         sel = bindat[:,1]==trt
         if sel.sum()==0:
             continue
         if ~sel.sum() > 0:
             pdb.set_trace()
-        forcov = scaler.transform(bindat[:,6:][sel,:])
+        forcov = bindat[:,6:][sel,:]
+        if not noscale:
+            forcov = scaler.transform(forcov)
         # should be centered after transform - meanest
         prodsums += forcov.transpose().dot(forcov)
         varsums += forcov.sum(axis=0)
@@ -454,12 +489,14 @@ def get_covmat(hisdir, trt,hideous=''):
 
     covest = (prodsums - (di * di.transpose())/nrow)/nrow
     prec = np.linalg.inv(covest)    
-    return prec
+    return prec,covest
 binners=['urx','year','age']
 
 def get_trt_info(hisdir, trt, hideous=''):
-    prec = get_covmat(hisdir, trt,hideous)
-
+    prec = []; cov = []
+    pc = get_covmat(hisdir, trt,hideous)
+    if pc:
+        prec, cov = pc
     scaler = pd.read_pickle(hisdir +hideous + "standardscaler.pkl")    
     bindf = pd.read_pickle(hisdir + "bindf.pkl")
     bindf = bindf.loc[bindf['binnedct'] > 0,:]
@@ -489,6 +526,9 @@ if __name__ == "__main__":
     todo = list(todo.loc[todo[0] > 20000, :].index)
     if TESTING:
         todo = [3512, 4747]
+    
+    if not os.path.exists(dirn + "/sparsemat"):
+        os.mkdir(dirn + "/sparsemat")
     pool = mp.Pool(processes=11 if not TESTING else 2)        
     res = [pool.apply_async(prepare_sparsemat2,
                             args=(dirn, "", drug, {}))

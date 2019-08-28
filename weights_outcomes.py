@@ -47,14 +47,17 @@ def omat(nodeinfo,omax):
             ixy += 2
         #outs = outs + [0]*(omax - ogot)
         pdat.append(outs + [0]*(omax - ogot))
-    return np.array(pdat) #pdat 
+    pdat = np.array(pdat) #pdat
+    anyo = np.where(pdat[:,1:] > 0, pdat[:,1:], 5000).min(axis=1).reshape(-1,1)
+    anyo = np.where(anyo==5000,0,anyo)
+    return np.hstack((pdat,anyo))
 
-def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True):
+def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True, weighting=True):
 
     #outc_fnames = hisdir + pspref
     savepref = 'min-' if whichdo else ''                
     if single_outcomes:
-        if os.path.exists(outc_fnames + ".iptw"):
+        if os.path.exists(outc_fnames + ".iptw"): #("" if not weighting else ".unwt") +
             print("Exists, returning: " + savepref + outc_fnames + ".iptw")
             return
     else:
@@ -73,9 +76,22 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
     num_out = len(outcomes_sorted)
     ipwm = {}
     towrite = {}
-    
+    print("making iptw file: " + outc_fnames + ".iptw")
     if single_outcomes:
-        ipwm = ipw(pickle.load(open(outc_fnames + ".ids.psmod.pkl",'rb')),whichdo)
+        if weighting:
+            psname = outc_fnames + ".ids.psmod.pkl"
+            if not os.path.exists(psname):
+                print("No ps {:s}, returning".format(psname))
+                return
+            ipwm = ipw(pickle.load(open(outc_fnames + ".ids.psmod.pkl",'rb')),whichdo)
+        else:
+            matchid = np.append(np.loadtxt(outc_fnames + ".ids.trt"),
+                                np.loadtxt(outc_fnames + ".ids.ctl"))
+            if matchid.shape[0] == 0:
+                print("no ids!", outc_fnames, " returning")
+                return
+            ipwm = pd.Series(np.ones(matchid.shape[0]), index=matchid)
+
         towrite = pd.DataFrame()
     else:
         ipwm = {outc:ipw(pickle.load(open(outc_fnames[outc] + ".ids.psmod.pkl",'rb')),whichdo)
@@ -83,7 +99,7 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
         towrite = {outc:pd.DataFrame() for outc in outcomes_sorted}
     def write_outcome(df, fname):
         df.index.name = 'id'
-        write_name = savepref + fname +".iptw"
+        write_name = savepref + fname +  ".iptw"
         do_header = not os.path.exists(write_name)
         with open(write_name,'a') as f:
             df.to_csv(f,sep="\t",header=do_header)
@@ -96,7 +112,7 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
         tco = trtoutc[trtk,:]
         ctlids_o = ctlids[ctlk]
         return tco, co, trtids_o, ctlids_o
-    columns = ['deenroll'] + outcomes_sorted
+    columns = ['deenroll'] + outcomes_sorted + ['any_outcome']
     for binid in trtinfo['bindf']['binid']:
         if not "/" + binid in ctlbins:
             continue
@@ -160,6 +176,27 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
             
             write_outcome(towrite[outcome], outc_fnames[outcome])
     #pdb.set_trace()            
-    print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes)            )
-    subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) ,shell=True)
+    print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) )
+    subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) ,shell=True)
     #savepref + hisdir + " " + pspref + "." +
+
+'''    
+for i in glob.glob("*iptw"):
+    if not os.path.exists(i.replace("iptw","eff")):
+        print("doing :",i)
+        subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + i.replace(".iptw","") + " " + " " + str(True) + " " + str(True) ,shell=True)    
+'''
+
+def boot_one(outc_fnames, namereplace = 'PSM',
+             single_outcomes=True, weighting=True):
+    if single_outcomes == False:
+        raise Exception("multi outcome bootstrap NOT IMPLEMENTED")
+    outc = pd.read_csv(outc_fnames + ".iptw",sep="\t")
+    t = outc.loc[outc['label']==1,:]
+    c = outc.loc[outc['label']==0,:]    
+    for i in range(5):
+        sel = np.random.choice(t.shape[0], t.shape[0])
+        fn = outc_fnames.replace(namereplace, namereplace + "boot" + str(i)) 
+        pd.concat((t.iloc[sel,:], c.iloc[sel,:]),axis=0).to_csv(fn+ ".iptw",sep="\t",index=False)
+        print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + fn  + " " + " " + str(single_outcomes) + " " + str(weighting) )
+        subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + fn + " " + " " + str(single_outcomes) + " " + str(weighting) ,shell=True)

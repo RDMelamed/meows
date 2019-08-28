@@ -30,7 +30,7 @@ def get_ps(modname):
     modsetting = settings[0] if len(settings) == 1 else psmod['xval'].mean(axis=1).idxmax() 
     return pd.Series(psmod['preds'][modsetting],index=psmod['ids'])
 
-def runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, calipers_psmatch, outcome_ord, alpha, l1, vocab2superft={},single_outcomes=True,idfile_name="PSM", do_ebm=True): ##comm_ids will be allready removed from ctl via first run
+def runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, calipers_psmatch, outcome_ord, alpha, l1, vocab2superft={},single_outcomes=True,idfile_name="PSM", do_ebm=False, ft_exclude=[]): ##comm_ids will be allready removed from ctl via first run
     #print("runctl:--",hisdir)
 
     
@@ -38,7 +38,7 @@ def runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, calipers_psmatch, outcome
     #pairname = file_names.get_savename(drugid, ctl)
     runname, trtname = file_names.get_trt_names(hisdir, drugid)
     pairname = runname + str(ctl)
-    #pair_allid = pairname + "." + idfile_name #pair_allid_prefix + pairname
+    pair_allid = pairname + "." + idfile_name #pair_allid_prefix + pairname
 
     #ctlbins = get_binned_ids(hisdir + savename + "binembeds.pytab")
     ### FIrst step: overall PS matching
@@ -57,22 +57,27 @@ def runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, calipers_psmatch, outcome
         for psk in calipers_psmatch:
 
             saven = ".".join([pairname, save_prefix, str(psk)])
-            #saven = file_names.get_savename_prefix(pairname, save_prefix + str(psk))            
+            '''            
+            #saven = file_names.get_savename_prefix(pairname, save_prefix + str(psk))
+
             if single_outcomes:
-                f, xval = ps.ctl_propensity_score(hisdir,drugid, ctl,saven + ".ids",alphas=alpha, l1s=l1)
+                f, xval = ps.ctl_propensity_score(hisdir,drugid, ctl,saven + ".ids",alphas=alpha, l1s=l1, ft_exclude = ft_exclude)
+                if not f:
+                    continue
             else:
                 ### now get PS -- for each outcome            
                 ### for smallest outcome, do cross-validation:
                 smallest = pd.Series(nmatch).idxmin()
                 osaves = [".".join([saven, oname, "ids"])
                           for oname in outcome_ord]
-                f, xval = ps.ctl_propensity_score(hisdir,drugid,ctl,osaves[smallest],alphas=alpha, l1s=l1)
+                f, xval = ps.ctl_propensity_score(hisdir,drugid,ctl,osaves[smallest],alphas=alpha, l1s=l1,ft_exclude = ft_exclude)
                 x = xval.mean(axis=1).idxmax().split("-")
                 l1s_do = [float(x[0])]
                 alph_do = [float(x[1])]
                 for ix, osave in enumerate(osaves):
-                    xval = ps.ctl_propensity_score(hisdir,drugid, ctl,osave,alphas=alph_do, l1s=l1s_do)
-            weights_outcomes.outcome_info(hisdir, saven, drugid, ctl, outcome_ord, trt_to_exclude, single_outcomes=single_outcomes)            
+                    xval = ps.ctl_propensity_score(hisdir,drugid, ctl,osave,alphas=alph_do, l1s=l1s_do, ft_exclude = ft_exclude)
+            '''
+            weights_outcomes.outcome_info(hisdir, saven, drugid, ctl, outcome_ord, trt_to_exclude, single_outcomes=single_outcomes, weighting = False)            
     ## removing Superft, see ps_match2 for the code
         
     ### "sparsematched"
