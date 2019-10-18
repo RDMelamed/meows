@@ -1,11 +1,10 @@
-import plot_helper
+
 import numpy as np
 import pandas as pd
 import sys
 import numpy as np
 import pickle
 import pdb
-import tables
 import subprocess
 import glob
 
@@ -13,7 +12,8 @@ import glob
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
-    
+sys.path.append('/project2/melamed/wrk/iptw/code')
+import plot_helper    
 def plotci(est, coxci, matcher=['wt','match','strat'], tots=[],tot_not_crude=True,sord_in = []):
     sord = coxci.xs(est,level=1,axis=1).mean(axis=1).sort_values()
     if len(sord_in) == 0:
@@ -61,6 +61,73 @@ def plotci(est, coxci, matcher=['wt','match','strat'], tots=[],tot_not_crude=Tru
             ax.plot(np.arange(sord.shape[0]), t,':',color='gray')            
     return f, axen,[yl, ym]
 from IPython.display import display, HTML
+import file_names
+def pairci(dird,trt,ctl,newvoc,sord_in=[],outc_sel = [],filt=''):
+    runname, trtname = file_names.get_trt_names(dird, trt)
+    pairname = runname + str(ctl)
+    prefs = {i.replace(pairname +".","").replace(".eff","").replace(".unwt",""):i
+             for i in glob.glob(pairname + "*.eff")}
+    if filt:
+        prefs = {k:v for k,v in prefs.items() if filt in k}
+    eff325 = match_auc.load_regr(prefs)
+    eff325 = eff325.loc[eff325.xs('event',level=1,axis=1).min(axis=1) > 100,:]
+    if outc_sel:
+        eff325 = eff325.loc[outc_sel,:]
+    #eff325 = match_auc.load_eff(dird,ctl, trt, prefs)
+    f, ax ,yl= plotci('surv',eff325, matcher=prefs, 
+                      tots=pd.DataFrame(eff325.xs('event',axis=1,level=1).min(axis=1),
+                                                         columns=['tot']),sord_in = sord_in) #outcs.min(axis=1)[outcsel])
+    #
+    tname = newvoc.loc[(newvoc['id']==trt) &(newvoc['type']=='rx'),'name'].values[0]
+    cname = newvoc.loc[(newvoc['id']==ctl) &(newvoc['type']=='rx'),'name'].values[0]
+    ax.set_title(tname + " vs CTL=" + cname)
+    return eff325, f, ax
+
+def single_outcome(dird,trt, ctllist, outc,voc):
+    runname, trtname = file_names.get_trt_names(dird, trt)
+    ctldat = dict()
+    for ctl in ctllist:
+        pairname = runname + str(ctl)
+        expci = {}
+        todof = glob.glob(pairname + ".PSM*.eff")
+        if len(todof) == 0:
+            continue
+        for i in todof:
+            nicename = i.replace(pairname +".","").replace(".eff","").replace(".unwt","")
+            expci[nicename] = match_auc.load_coxeff(i)
+        x = pd.DataFrame(pd.concat(expci,axis=1).loc[outc,:]).transpose().stack().transpose()
+        x.columns = x.columns.droplevel(level=0)
+        ctldat[ctl] = x
+        
+    ctllist = list(ctldat.keys())
+    print(ctllist)
+    f, axen = plt.subplots(1,figsize=(11,3))
+    inc = 1/(len(ctllist) + 2)
+    coxci = pd.concat(ctldat,axis=0)
+    ym = np.percentile(coxci['surv.UI'],95)
+    ym = np.percentile(coxci['surv.UI'],2)    
+    ypos = np.percentile(coxci['surv.UI'],90)
+
+    for (i, ro) in enumerate(ctllist):
+        toplot = ctldat[ro]
+        print(i,ro)
+        for (j, meh) in enumerate(toplot.index):
+            #print(ro,meh)
+            lty = '-'
+            if toplot.loc[meh,'event'] < 200:
+                lty = ':'
+            axen.plot([i+j*inc,i+j*inc], [toplot.loc[meh,"surv.LI"],toplot.loc[meh,"surv.UI"]],lty)
+            if toplot.loc[meh,"surv.LI"] > 1 or toplot.loc[meh,"surv.LI"] > 1 :
+                axen.plot(i+j*inc,ypos,"+",c='w',label="_nolegend_",markersize=10)
+                axen.plot(i+j*inc,ypos,"+",c='k',label="_nolegend_")
+    axen.set_xticks(np.arange(len(ctllist)))
+    names = list(voc.loc[voc['type']=='rx',:].set_index('id').loc[ctllist,'name'].values)
+    axen.set_xticklabels(names,rotation=90)
+    axen.plot([0,len(ctllist)],[1,1],':',color='gray')
+    return f, axen,pd.concat(ctldat, axis=0)
+
+
+
 
 # Assuming that dataframes df1 and df2 are already defined:
 def distFromZero(coagregci):
@@ -109,6 +176,7 @@ def cipair2(levphen,notot=False,sord_in = []):
     ax.set_ylim(yl)
     return f, ax,yl
 
+
 import glob
 
 def ps2pref(ps,lab):
@@ -117,7 +185,38 @@ def ps2pref(ps,lab):
 
 import os
 #sys.path.append("/project2/melamed/wrk/iptw/work/02.27_match2nc")
-import weights_outcomes
+
+
+def plot_ps(modfn, ids, ax):
+    fullps = pickle.load(open(modfn,'rb'))
+    modsetting = fullps['xval'].mean(axis=1).idxmax() 
+    fullps = pd.Series(ps2pref(fullps['preds'][modsetting], fullps['lab']), index=fullps['ids'])
+    #plt.plot(xval, density(xval))
+    #ax.fill(x, zer, x,a,'b', alpha=.2,label='unexposed')
+    ids = fullps['ids'][fullps['lab']==1]
+    if len(set(ids) - set(fullps.index)) > 0:
+        print("fucked at:", fn,len(set(ids) - set(fullps.index)))
+        ids = ids[np.isin(ids,fullps.index)]
+    dens = gaussian_kde(fullps.loc[ids])
+    yv = dens(xval) 
+    colorVal = scalarMap.to_rgba(i)
+    i += 1
+    nm = mod[0] + mod[1]
+    nm = nm if nm else "NN"
+    #print("@",fn, "PSMTarget" in fn)
+    ax[i][0].fill_between(xval, zer,yv,facecolor=colorVal,alpha=.3,label=nm)  
+    ax[i][0].set_title(nm)  
+    dens = gaussian_kde(fullps.loc[m['ids'][m['lab']==0]])
+    yv = dens(xval)  
+    ax[i][0].fill_between(xval, zer,yv,facecolor='gray',alpha=.3,label=nm)
+    import weights_outcomes
+    ipw = weights_outcomes.ipw(m)
+    dens = gaussian_kde(ipw[m['lab']==0])
+    yv = dens(ipwx)  
+    ax[i][1].fill_between(ipwx, zer,yv,facecolor='blue',alpha=.3,label=nm)
+    dens = gaussian_kde(ipw[m['lab']==1])
+    yv = dens(ipwx)  
+    ax[i][1].fill_between(ipwx, zer,yv,facecolor='red',alpha=.3,label=nm)
 
 def prefpair(pair, modperc):
     modperc = modperc

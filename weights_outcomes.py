@@ -54,11 +54,17 @@ def omat(nodeinfo,omax):
 
 def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True, weighting=True):
 
+    def run_R_est(outc_fnames):
+        print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) )
+        subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) ,shell=True)
+
     #outc_fnames = hisdir + pspref
     savepref = 'min-' if whichdo else ''                
     if single_outcomes:
         if os.path.exists(outc_fnames + ".iptw"): #("" if not weighting else ".unwt") +
             print("Exists, returning: " + savepref + outc_fnames + ".iptw")
+            if not os.path.exists(outc_fnames + ("" if not weighting else ".unwt") + ".eff"):
+                run_R_est(outc_fnames)
             return
     else:
 
@@ -168,16 +174,16 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
                     write_outcome(towrite[outcome], outc_fnames[outcome])
                     towrite[outcome] = pd.DataFrame()
     if single_outcomes:
-        write_outcome(pd.concat((towrite.loc[:,['ipw','label']],
+        if towrite.shape[0] > 0:
+            write_outcome(pd.concat((towrite.loc[:,['ipw','label']],
                          towrite.drop(['ipw','label'],axis=1)),axis=1),
                         outc_fnames)
     else:
         for outcome in outc_fnames:
             
             write_outcome(towrite[outcome], outc_fnames[outcome])
-    #pdb.set_trace()            
-    print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) )
-    subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) ,shell=True)
+    #pdb.set_trace()
+    run_R_est(outc_fnames)
     #savepref + hisdir + " " + pspref + "." +
 
 '''    
@@ -194,7 +200,7 @@ def boot_one(outc_fnames, namereplace = 'PSM',
     outc = pd.read_csv(outc_fnames + ".iptw",sep="\t")
     t = outc.loc[outc['label']==1,:]
     c = outc.loc[outc['label']==0,:]    
-    for i in range(5):
+    for i in range(10):
         sel = np.random.choice(t.shape[0], t.shape[0])
         fn = outc_fnames.replace(namereplace, namereplace + "boot" + str(i)) 
         pd.concat((t.iloc[sel,:], c.iloc[sel,:]),axis=0).to_csv(fn+ ".iptw",sep="\t",index=False)

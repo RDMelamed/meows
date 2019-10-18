@@ -14,11 +14,10 @@ from scipy import sparse
 import scipy
 from itertools import chain
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import roc_auc_score
-sys.path.append("../08.13_propeval/")
-import regr_sparse_dense as rsd
+
 import os
 import json
+import glob
 import file_names
 def gen_embname(savename,hideous=''):
     return savename + hideous + ".binembeds.pytab"
@@ -36,6 +35,14 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     savename = savedir + (str(drugid) if not is_trt else "trt")
 
     namesuff = hideous + featweights + weightmode
+    tmp = "tmp/" + savename.replace("/",".") + namesuff
+    if len(glob.glob(tmp + "*")) > 0:
+        for f in glob.glob(tmp + "*"):
+            os.remove(f)
+        tabrem = gen_embname(savename,namesuff)
+        os.remove(tabrem)
+        print("removed ",tabrem)
+    
     if os.path.exists(gen_embname(savename,namesuff)):
         return
     print('making: ',gen_embname(savename,namesuff))
@@ -45,7 +52,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     ### - set up a file to save based on treated
     ##################
     #trtfile = hisdir + "trt"
-    chunksize = 50000            
+    chunksize = 100000            
     def get_binner_bindf():
         if is_trt:
             header = ['week','age','gender','urx','rx','dx','px']
@@ -72,6 +79,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
 
     relevant_bins = set(bindf.index)
     bid2i = dict(zip(*tuple((bindf.index, bindf['binid']))))
+    
     drugbins = tables.open_file(gen_embname(savename,namesuff) ,mode="a")
     #outcome_tab = tables.open_file(hisdir + savename+ "outcomes.pytab" ,mode="a")    
     tabcache = defaultdict(list)
@@ -80,7 +88,8 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     scaler = StandardScaler()
     print("capping bins at 50k!!!!")
     overflowlist = []
-    tmp = "tmp/" + savename.replace("/",".") + namesuff
+
+    
     featweights_mat = np.zeros(0)
     if featweights:
         featweights_mat = pd.read_csv(featweights,header=None,index_col=0,names=['id','coef'])
@@ -123,6 +132,8 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
         bindemo = pd.DataFrame(bindemo,columns=['week','age','gender','urx'])
         bincontents = np.array(bincontents)
         binoutcomes = np.array(binoutcomes)
+        sel = ~np.isin(bincontents[:,0], filtid)
+        bindemo = bindemo.loc[sel,:]; bincontents = bincontents[sel,:]; binoutcomes =  binoutcomes[sel]
         #if not isinstance(binoutcomes[0], list):
         #    binoutcomes[0][0] = 
         binchunk = binner(bindemo)
@@ -156,7 +167,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
             patid, outcome, drug, bindemoi, nonbin_demoi, x = parse_row(row)
 
             ### study design filters
-            if dofilts(x, bindemoi) or patid in filtid:
+            if dofilts(x, bindemoi): # or patid in filtid:
                 continue
             if is_trt: ### only for treated, for future reference save list of elt
                 trtid = drug
@@ -204,9 +215,9 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
                 #print("@chunk",len(binsseen))
         #pdb.set_trace()
         bin_store(bindemo, bincontents,binsseen,binoutcomes)
-        if pdone > 3000000:
-            print("breaking at 3M")
-            break
+        #if pdone > 3000000:
+        #    print("breaking at 3M")
+        #    break
     for b, v in tabcache.items():
         if len(v) > 0:
             bin_write(b)
