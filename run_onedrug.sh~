@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH --time=36:00:00
+#SBATCH --nodes=1     ### num nodes
+#SBATCH --mem=56G
+#SBATCH --ntasks-per-node=13
+#SBATCH --account=pi-melamed
+
+module load Anaconda3
+module load R
+#ipython skips.py 
+/software/Anaconda3-5.0.0.1-el7-x86_64/bin/python /project2/melamed/wrk/iptw/code/matchweight/run_steps.py $@

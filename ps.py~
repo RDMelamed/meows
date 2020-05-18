@@ -30,6 +30,10 @@ def get_sparse(pref, ftsuffix):
         return sp[0]
     else:
         return sparse.hstack(sp,format='csr')
+def agobins(hisft):
+    hisft.data = 800 - hisft.data
+    sta = sparse.hstack([hisft >= (800-4), hisft >= (800 - 52), hisft > 0],format='csr')
+    return sta
 
 def load_sparse_mat(name, filename='store.h5'):
     """
@@ -98,21 +102,7 @@ def load_selected(trt_h5, trt_useids, sparse_index):
         #ftsum += sm
     #pdb.set_trace()
     return trt_dense, trt_sparse
-
-
-
-def agobins(hisft): 
-    hisft.data = 800 - hisft.data
-    sta = sparse.hstack([hisft >= (800-4), hisft >= (800 - 52), hisft > 0],format='csr')
-    return sta
-            
-
-def agoexp(hisft, wid=360):
-    xx = np.array(hisft.data)
-    hisft.data = np.exp(-1*(xx)**2/wid)
-    return hisft
-
-
+                
 ## hisdir = where all files are
 ## name = name of treated -> look for name+".den", name +".npz"
 ## ctlname = same as name but for ctl
@@ -136,7 +126,6 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
 
     trt_useids = np.loadtxt(idfile + ".trt")
     ctl_useids = np.loadtxt(idfile + ".ctl")
-    #pdb.set_trace()
     if len(trt_useids) + len(ctl_useids) < 100:
         print("Aborting ps... < 100 ids",idfile)
         return "", 0
@@ -192,6 +181,14 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
     pickle.dump(modpred,f)
     f.close()
     return fsave, modpred['xval']
+
+            
+
+def agoexp(hisft):
+    xx = np.array(hisft.data)
+    hisft.data = np.exp(-1*(xx)**2/360)
+    return hisft
+
     
 def featlab2modpred(dense, hisft, lab, alphas, l1s):
     spline_info = rs.get_spline_info(dense[lab==1,:])

@@ -113,46 +113,6 @@ def one_bin_NN_pscaliper(trt_compare, ctldat, dcutoff, cutoff, prec, psmod):
 
     return (BIG_OUT, SMALL_OUT) if smaller_is_ctl else (SMALL_OUT, BIG_OUT) 
 
-def one_bin_NN(trt_compare, ctldat, cutoff, binid, prec,nlimit=0):
-
-    IDOUT = []
-    if nlimit > 0 and trt_compare.shape[0] > nlimit:
-        sel = np.random.choice(np.arange(trt_compare.shape[0]), nlimit,replace=False)
-        trt_compare = trt_compare.iloc[sel,:]
-
-    
-    smaller = ctldat; bigger = trt_compare
-    if ctldat.shape[0] > trt_compare.shape[0]:
-        smaller = trt_compare; bigger = ctldat
-    #pdb.set_trace()
-    i = 0
-    while smaller.shape[0] > 0 and bigger.shape[0] > 0:
-        #idout_len = len(IDOUT)
-        i += 1
-        #if i > 500:
-        #    pdb.set_trace()
-        trtadd = []
-        ctladd = []
-        nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree',metric="mahalanobis",metric_params={'VI':prec}).fit(bigger)
-        distances, indices = nbrs.kneighbors(smaller)
-        nns = pd.DataFrame({'dist':distances[:,0],
-                            'ind':bigger.index[indices[:,0]]},index=smaller.index)
-        nnb = nns.sort_values('dist').drop_duplicates('ind')
-        #pdb.set_trace()
-        nnb = nnb.loc[nnb['dist'] < cutoff,:]
-        if nnb.shape[0] == 0:
-            #pdb.set_trace()
-            #print("ran out for " + binid)
-            break
-        #ctladd = list(ctlids[nnb['ind']])
-        IDOUT.append(list(nnb['ind']))
-        IDOUT.append(list(nnb.index))
-        #if len(IDOUT) == idout_len:
-        #    break
-        smaller = smaller.drop(nnb.index,axis=0)
-        bigger = bigger.drop(nnb['ind'],axis=0)
-    return IDOUT
-
 
 def one_bin_PSM(trt_compare, ctldat, cutoff, binid):
     IDOUT = []
@@ -235,3 +195,43 @@ def mod_pred(XS, lab, alphas, l1_rs):
     return mods, preds, roc
 '''
     
+def one_bin_NN(trt_compare, ctldat, cutoff, binid, prec,nlimit=0):
+
+    IDOUT = []
+    if nlimit > 0 and trt_compare.shape[0] > nlimit:
+        sel = np.random.choice(np.arange(trt_compare.shape[0]), nlimit,replace=False)
+        trt_compare = trt_compare.iloc[sel,:]
+
+    
+    smaller = ctldat; bigger = trt_compare
+    if ctldat.shape[0] > trt_compare.shape[0]:
+        smaller = trt_compare; bigger = ctldat
+    #pdb.set_trace()
+    i = 0
+    while smaller.shape[0] > 0 and bigger.shape[0] > 0:
+        #idout_len = len(IDOUT)
+        i += 1
+        #if i > 500:
+        #    pdb.set_trace()
+        trtadd = []
+        ctladd = []
+        nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree',metric="mahalanobis",metric_params={'VI':prec}).fit(bigger)
+        distances, indices = nbrs.kneighbors(smaller)
+        nns = pd.DataFrame({'dist':distances[:,0],
+                            'ind':bigger.index[indices[:,0]]},index=smaller.index)
+        nnb = nns.sort_values('dist').drop_duplicates('ind')
+        #pdb.set_trace()
+        nnb = nnb.loc[nnb['dist'] < cutoff,:]
+        if nnb.shape[0] == 0:
+            #pdb.set_trace()
+            #print("ran out for " + binid)
+            break
+        #ctladd = list(ctlids[nnb['ind']])
+        IDOUT.append(list(nnb['ind']))
+        IDOUT.append(list(nnb.index))
+        #if len(IDOUT) == idout_len:
+        #    break
+        smaller = smaller.drop(nnb.index,axis=0)
+        bigger = bigger.drop(nnb['ind'],axis=0)
+    return IDOUT
+

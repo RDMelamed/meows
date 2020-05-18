@@ -30,8 +30,7 @@ sys.path.append("../../code")
 
 def getpercentiles(urx,perc=[.2,.4,.6,.8,1]):
     urx = np.cumsum(urx.loc[urx['ct'] > 0,:])
-    return [ urx.loc[urx['ct'] <=p*urx['ct'].max(),'ct'].idxmax() for p in perc
-             if sum(urx['ct'] <=p*urx['ct'].max()) > 0]
+    return [ urx.loc[urx['ct'] <=p*urx['ct'].max(),'ct'].idxmax() for p in perc]
 
 def get_spline_info(trt):
     #mins = np.array([10000]*2)
@@ -69,7 +68,7 @@ def get_spline_info(trt):
             #            max(agerange[1], dft[sel,1].max())]
     xtreme = [.05,.95]
     for_formula = {'age':[2, [0,5,10,15,25,40,55,70]  + [90], 1], 
-                       'week':[2, list(np.array(sorted(uy))*52) + [13*52],0],
+                       'week':[2, list(np.array(sorted(uy))*52) + [12*52],0],
                        'urx':[3,getpercentiles(urx), 3], 
                        'trx':[3,getpercentiles(trx),4],
                        'tdx':[3,getpercentiles(tdx),5],
@@ -131,16 +130,11 @@ def make_mods(iter, alphas, l1s, class_weight='balanced'):
     for l1 in l1s:
         for p in alphas:
             mods[str(l1) + "-" + str(p)] = SGDClassifier(loss="log", penalty="elasticnet",
-                                                         alpha=p, l1_ratio=l1,max_iter=iter, tol=None,
+                                                alpha=p, l1_ratio=l1,max_iter=iter,
                                                          class_weight= class_weight)
     return mods
 
-def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1s=[.3,.2],fit_sel=np.zeros(0)):
-    XS = XS_in
-    lab = lab_in
-    if fit_sel.shape[0] > 0:
-        XS = XS_in[fit_sel,:]
-        lab = lab_in[np.where(fit_sel)[0]]        
+def cross_val(XS, lab, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1s=[.3,.2]):
     iter = int(iter/XS.shape[0]) #500 00000
     sgdmods = make_mods(iter, alphas, l1s)
     scaler = MaxAbsScaler()    
@@ -186,10 +180,10 @@ def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1
             
             print("FOLD ",f)
     preds = {}
-    xtrans = scaler.fit_transform(XS_in)    
+    xtrans = scaler.fit_transform(XS)    
     for k in sgdmods:
-        sgdmods[k].fit(xtrans, lab_in)
-        sgdmods[k].intercept_ = sgdmods[k].intercept_ + np.log(lab_in.mean()/(1-lab_in.mean()))
+        sgdmods[k].fit(xtrans, lab)
+        sgdmods[k].intercept_ = sgdmods[k].intercept_ + np.log(lab.mean()/(1-lab.mean()))
         preds[k] = sgdmods[k].predict_proba(xtrans)[:,1]
     return sgdmods, scaler, lab, preds, rocs
 

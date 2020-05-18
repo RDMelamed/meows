@@ -31,15 +31,14 @@ import regression_splines
 ###   -- the trt dat in "hisdir"
 import json
 from file_names import *
-
-ONLY_ONE = False
-
 def load_emb(hideous=''):
     femb, fdrugemb, fpred = pickle.load(open("../05.02_bigdrugs/emb50-500.pkl" if not hideous else hideous,'rb'))
     hname = os.path.basename(hideous).split(".")[0]    
     return femb.values, hname
 
 def load_ugly(doid,noemb, hideous=''):
+    if len(doid)==0:
+        doid = [int(i) for i in open('big_neuropsycho').read().strip("\n").split("\n")]
     newvoc = pd.read_pickle("../../data/clid.vi.allvocab.pkl")
     dodict = newvoc.loc[newvoc['type']=='rx',:].set_index('id').loc[doid,['vi']].to_dict()['vi']
     #dodict = newvoc.loc[newvoc['type']=='rx',:].set_index('id').loc[doid,['clid']].to_dict()['clid']
@@ -50,15 +49,13 @@ def load_ugly(doid,noemb, hideous=''):
 
 
 
-## single_outcomes = if TRUE then you have ALL outcomes must not have happened at time of drug prescription. if FALSE then you are considering outcomes independently, in which case some of the people in the data might have a history of the outcome and you would need to exclude those people from the matching, do a separate matching  for each outcome, more or less a pain in ass
-## caliper_percentile = percentile of embedding caliper
-## NN_pscaliper = additional PS caliper on embedding matching
+    
 def drug_group2(drugid, doid, hisdir,outcomes, 
                 psmatch=[],NN_pscaliper=[],vocab2superft={},
-                caliper_percentile=0, caliper_median_method=False,hideous='',
-                multi=True, single_outcomes=True, ft_exclude=[],featweights='',
-                weight_method='',time_chunk=0):
-    
+                caliper_percentile=90, caliper_median_method=False,hideous='',
+                multi=True, single_outcomes=False, ft_exclude=[],featweights='',
+                weight_method=''):
+    #pdb.set_trace()    
     if not drugid in doid:
         doid.append(drugid)
     if not hisdir.endswith("/"): hisdir += "/"
@@ -75,7 +72,7 @@ def drug_group2(drugid, doid, hisdir,outcomes,
     #pdb.set_trace()
     if not os.path.exists(trtid):
         subprocess.call("cut -f 1 " + " ".join(trtfiles) + " | sort > " + trtid,shell=True)
-    #pdb.set_trace()    
+
     noemb = caliper_percentile == 0
     dodict, emb50, hideous_name = load_ugly(doid, noemb)
     #print("dodict:", dodict)
@@ -91,8 +88,6 @@ def drug_group2(drugid, doid, hisdir,outcomes,
     #pdb.set_trace()
     his2ft.bin_pats(runname,emb50,{},trtfiles,0, is_trt=True,featweights=featweights, weightmode=weight_method)
     tables.file._open_files.close_all()
-
-    ### caliper: for embedding matching, create a caliper for nearest neighbors
     if hideous: ### nearest neighbor will use this one 
        emb, hideous_name = load_emb(hideous)
        his2ft.bin_pats(runname,emb,{},trtfiles, 0, is_trt=True,hideous=hideous_name)
@@ -100,6 +95,7 @@ def drug_group2(drugid, doid, hisdir,outcomes,
        caliper.caliperdict(trtname, drugid,
                         median=caliper_median_method,percentile=caliper_percentile, hideous=hideous_name)
     else:
+
         caliper.caliperdict(trtname, drugid,
                             median=caliper_median_method,percentile=caliper_percentile,
                             hideous=featweights + weight_method)
@@ -107,32 +103,62 @@ def drug_group2(drugid, doid, hisdir,outcomes,
 
     #pdb.set_trace()
     
+    ### create sparsemat ONCE rather than doing it for every pair...
+    #his2ft.prepare_sparsemat2(hisdir,trtname, trtname,{},trtfiles)
     tables.file._open_files.close_all()    
+    procs = []
+    nproc = 3
     Q = mp.Queue(maxsize=500000)
     plock = mp.Lock()
-    for ctl in list(set(dodict.keys()) - set([drugid])):
-        Q.put(ctl)
-    
     if not multi:
+
+        ### test!
+        for ctl in list(set(dodict.keys()) - set([drugid])):
+            Q.put(ctl)
         Q.put(None)
+
         run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername, Q,
                                outcomes,psmatch,NN_pscaliper, plock, hideous,noemb,featweights,weight_method,
-                               single_outcomes, ft_exclude, time_chunk)
+                               single_outcomes, ft_exclude)
+        
     else:
-        procs = []
-        nproc = 3
+        for ctl in list(set(dodict.keys()) - set([drugid])):
+            Q.put(ctl)
         for i in range(nproc):
             Q.put(None)
         for i in range(nproc):
             p = mp.Process(target = run_ctl_proc,
                        args = (hisdir, trtfiles,drugid, doid, calipername, Q,
                                outcomes,psmatch,NN_pscaliper, plock, hideous,noemb,featweights,weight_method,
-                               single_outcomes, ft_exclude, time_chunk))
+                               single_outcomes, ft_exclude))
             p.start()
             procs.append(p)
         for p in procs:
             p.join()
             print("got one!")
+        '''
+        run_preps(hisdir, trtfiles,drugid, doid,  Q,
+                  outcomes,plock, hideous,False,featweights,weight_method)
+
+        #filter_multi(hisdir, drugid, doid)
+        Q.put(doid[0])
+        Q.put(None)
+        for i in range(nproc):
+            p = mp.Process(target = run_ctl_proc,
+                       args =(hisdir,trtfiles,drugid, doid, calipername, Q,
+                     outcomes, psmatch,NN_pscaliper,plock, hideous+ featweights + weight_method,
+                     single_outcomes, ft_exclude))
+            
+            p.start()
+            procs.append(p)
+        for ctl in list(set(dodict.keys()) - set([drugid])):
+            Q.put(ctl)
+        for i in range(nproc):
+            Q.put(None)
+        for p in procs:
+            p.join()
+            print("got one!")
+        ''' 
     finished = open(runname+"complete_log").read().strip().split("\n")
     did_finish = False
     if len(set(dodict.keys()) - set([drugid])  - set([int(i) for i in finished if not "complete" in i]))== 0:
@@ -149,15 +175,44 @@ def drug_group2(drugid, doid, hisdir,outcomes,
 
 
         
+'''
+def run_preps(hisdir, trtfiles,drugid, doid,  Q,
+                 outcomes,plock, hideous='',noemb=False,featweights='',weight_method=''):
+
+    dodict, emb50, hideous_name = load_ugly(doid, noemb)
+    #hideous = '' 
+    times_record = {}
+    for ctl in iter(Q.get, None):
+        coxfilt = {'exclude':set([dodict[drugid], dodict[ctl]])}
+        #savename = runname + str(ctl)
+        times_record[str(ctl)] = prep_match(hisdir, trtfiles,drugid,
+           coxfilt, emb50,ctl, outcomes,hideous=hideous,featweights=featweights,weight_method=weight_method)
+    print("QUITTING run_preps")
+def run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername, Q,
+                 outcomes, psmatch,NN_pscaliper,plock, hideous='', single_outcomes =False, ft_exclude=[]):
+    times_record = {}
+    for ctl in iter(Q.get, None):
+        times_record[str(ctl)] = onectl(hisdir, drugid, calipername,
+               ctl, outcomes, psmatch=psmatch,NN_pscaliper=NN_pscaliper,hideous=hideous, single_outcomes=single_outcomes, ft_exclude=ft_exclude)
+        plock.acquire()        
+        with open("times_record_tmp",'a') as f:
+            f.write(json.dumps(times_record))
+        plock.release()
+        
+    plock.acquire()
+    with open("times_record",'a') as f:
+        pd.DataFrame(times_record,index=['time']).to_csv(f)
+    plock.release()        
+    print("QUITTING run_ctl_proc")
+'''
         
 def run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername,  Q,
                  outcomes,psmatch,NN_pscaliper, plock, hideous='',noemb=False,featweights='',weight_method='',
-                 single_outcomes =False, ft_exclude=[], time_chunk=0):
+              single_outcomes =False, ft_exclude=[]):
     dodict, emb50, hideous_name = load_ugly(doid, noemb)
-    
+    #hideous = '' 
     times_record = {}
     for ctl in iter(Q.get, None):
-        print("Q get",ctl)
         coxfilt = {'exclude':set([dodict[drugid], dodict[ctl]])}
         #savename = runname + str(ctl)
         t0 = time.time()
@@ -165,9 +220,8 @@ def run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername,  Q,
            coxfilt, emb50,ctl, outcomes,hideous=hideous,featweights=featweights,weight_method=weight_method)
         t1 = time.time()
         times_record[str(ctl)] = onectl(hisdir, drugid, calipername,
-                                        ctl, outcomes, psmatch=psmatch,
-                                        NN_pscaliper=NN_pscaliper,hideous=hideous+ featweights + weight_method,
-                                        single_outcomes=single_outcomes, ft_exclude=ft_exclude,time_chunk=time_chunk)
+               ctl, outcomes, psmatch=psmatch,NN_pscaliper=NN_pscaliper,hideous=hideous+ featweights + weight_method,
+                     single_outcomes=single_outcomes, ft_exclude=ft_exclude)
         plock.acquire()        
         with open("times_record_tmp",'a') as f:
             f.write(json.dumps(times_record))
@@ -184,10 +238,9 @@ def prep_match(hisdir, trtfiles,drugid,
            hideous='', featweights='',weight_method=''):    
     import time
     t0 = time.time()
-    #pdb.set_trace()
+
     #ctlf = glob.glob(hisdir + "valid*." + str(ctl))
     ctlf = todo_files(hisdir, ctl)
-    print("prep_match ", ctl)
     runname, trtname = get_trt_names(hisdir, drugid)
     #savename = get_savename(drugid, ctl)
     pair_prefix = runname + str(ctl)
@@ -197,8 +250,7 @@ def prep_match(hisdir, trtfiles,drugid,
     #     * considered removing any patient with incident-use of both drugs ("comm_ids"),
     #     * must include in this list any treated with history of ctl drug (from "get_his_ids")
     ##  - comm_ids: also to removed from CTL bin embed files (via filtid argument + coxfilt), thus not in Ctl either.  filtid = will remove those with past or future of the other drug;
-    ## THIS IS THE KEY THING TO REMOVE!
-    '''
+    
     commidfile = pair_prefix + ".comm_id"
     comm_ids = []
     if not os.path.exists(commidfile):
@@ -209,14 +261,11 @@ def prep_match(hisdir, trtfiles,drugid,
         np.savetxt(commidfile, comm_ids)
     else:
         comm_ids = np.loadtxt(commidfile)
-    '''
-    ### NOW only removing TRT with HISTORY of CTL
     trt_to_exclude = []
     trtexcl_file = pair_prefix + ".trt_excl"
-    if not os.path.exists(trtexcl_file):
-        trt_to_exclude = sorted(set(his2ft.get_his_ids(trtfiles, coxfilt)))
-        #trt_to_exclude = sorted(set(his2ft.get_his_ids(trtfiles, coxfilt))
-        #                   | set(comm_ids))
+    if not os.path.exists(trtexcl_file):        
+        trt_to_exclude = sorted(set(his2ft.get_his_ids(trtfiles, coxfilt))
+                           | set(comm_ids))
         np.savetxt(trtexcl_file, trt_to_exclude,fmt="%d")
     else:
         trt_to_exclude = np.loadtxt(trtexcl_file,dtype=int)
@@ -227,8 +276,9 @@ def prep_match(hisdir, trtfiles,drugid,
     ### bin the ctl people as they fall in same bin as trt
     tx = time.time()
     print(pair_prefix, "  binning...")
-    ### DITTO REMOVED COMM_IDS here...
-    his2ft.bin_pats(runname,emb50,coxfilt,ctlf, ctl) #, filtid = comm_ids, featweights=featweights, weightmode=weight_method)
+    #his2ft.bin_pats(runname,emb50,{},trtfiles,0, is_trt=True)
+    #pdb.set_trace()
+    his2ft.bin_pats(runname,emb50,coxfilt,ctlf, ctl, filtid = comm_ids, featweights=featweights, weightmode=weight_method)
     if hideous:
         emb50, hideous = load_emb(hideous)
         #his2ft.bin_pats(hisdir,emb50,coxfilt,ctlf, savename, filtid = comm_ids,hideous=hideous)
@@ -258,11 +308,50 @@ def pair_names(pair_prefix):
     pair_allid = pair_idfile(pair_prefix, pair_allid_name)
     return pair_allid_name, pair_allid
 
+def filter_multi(hisdir, drugid, doid):
+    runname, trtname = get_trt_names(hisdir, drugid)
+    if os.path.exists(runname + "removed_ids"):
+        print('skipping filter_multi '  + runname + "removed_ids" + " exists")
+        return
+    idgot = set()
+    multi_id = defaultdict(set)
+    def get_name(ctl_i):
+        pair_prefix = runname + str(ctl_i) 
+        return pair_names(pair_prefix)[1]
+
+    for ctl_i in range(len(doid)):
+        pair_allid_i = get_name(doid[ctl_i])
+        id_i = np.loadtxt(pair_allid_i + ".ids.ctl")
+        for ctl_j in range(ctl_i + 1, len(doid)):        
+            pair_allid_j = get_name(doid[ctl_j])
+
+            id_j = np.loadtxt(pair_allid_j + ".ids.ctl")
+            for comm in set(id_i) & set(id_j):
+                multi_id[comm] |= set([doid[ctl_i], doid[ctl_j]])
+        np.savetxt(pair_allid_i + ".ids.ctl",
+                   np.array(list(set(id_i) - set(multi_id.keys()))))
+    #pdb.set_trace()
+    towrite = defaultdict(list)
+    dup = 0
+    f = open(runname + "removed_ids",'w')
+    for pat, drugs in multi_id.items():
+        #pdb.set_trace()
+        chosen = np.random.choice(list(drugs),1)[0]
+        towrite[chosen].append(pat)
+        dup += len(drugs)
+        f.write(str(int(pat)) + "\t" + ",".join([str(d) for d in set(drugs) - set([chosen])])+"\n")
+    f.close()
+    print('dup',dup, len(multi_id))
+
+    for fn, pats in towrite.items():
+        
+        with open(get_name(fn) + ".ids.ctl", 'ab') as f:
+            np.savetxt(f, np.array(pats))
             
 def onectl(hisdir,drugid, calipername,
            ctl, outcomes,
            psmatch=[],NN_pscaliper=[], vocab2superft={},
-           hideous='', single_outcomes=False, ft_exclude=[],time_chunk=0):    
+           hideous='', single_outcomes=False, ft_exclude=[]):    
 
     ## now prepare all data for PS:
     #tx = time.time()
@@ -320,10 +409,8 @@ def onectl(hisdir,drugid, calipername,
             tr = ps2match2ipw(hisdir, drugid, calipername,
                               ctl,  outcomes,[],
                               idfile_name=pair_allid_samp_name, #idfile_name,
-                              psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes, ft_exclude = ft_exclude, time_chunk=time_chunk)
+                        psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes, ft_exclude = ft_exclude)
             times_record.update(tr)
-            if ONLY_ONE:
-                break
     else:
         #idfile_name = ".PSM" + str(i)
         #pair_allid_samp =  pair_prefix + idfile_name        
@@ -337,7 +424,7 @@ def onectl(hisdir,drugid, calipername,
 def ps2match2ipw(hisdir, drugid, calipername,
                  ctl,  outcomes,trt_to_exclude, ## trt_to_exclude -- don't really need this b/c using files of ids to match
                  idfile_name="PSM",
-                 psmatch=[],NN_pscaliper=[], vocab2superft={},hideous='', single_outcomes=False, ft_exclude = [], time_chunk=0):
+                 psmatch=[],NN_pscaliper=[], vocab2superft={},hideous='', single_outcomes=False, ft_exclude = []):
     alpha=[.0001,.001,.01]; l1=[.2,.3]
     tx = time.time()
     runname, trtname = get_trt_names(hisdir, drugid)
@@ -354,12 +441,8 @@ def ps2match2ipw(hisdir, drugid, calipername,
     #outcomes = [outcomes[k] for k in oorder]
     #for psperc in psmatch:
     tx = time.time()
-    #ps_match.runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, psmatch, outcomes,
-    #                        alpha, l1, vocab2superft=vocab2superft, single_outcomes=single_outcomes,do_ebm = False, idfile_name=idfile_name, ft_exclude = ft_exclude)
-
     ps_match.runctl_psmatch(hisdir, ctl, drugid,trt_to_exclude, psmatch, outcomes,
-                            alpha, l1, single_outcomes=single_outcomes, idfile_name=idfile_name, ft_exclude = ft_exclude, time_chunk=time_chunk) 
-        
+                            alpha, l1, vocab2superft=vocab2superft, single_outcomes=single_outcomes,do_ebm = False, idfile_name=idfile_name, ft_exclude = ft_exclude) 
     print("Finish psmatch... @{:2.2f}".format((time.time() - tx)/60))
     times_record[ idfile_name + 'psm'] = (time.time() - tx)/60
     #times_record[ pair_allid_prefix + 'psm' + str(psperc)] = (time.time() - tx)/60

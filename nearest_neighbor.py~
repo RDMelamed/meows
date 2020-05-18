@@ -109,7 +109,7 @@ def matchctl(hisdir,ctl, drugid, idfile_name, calipername,ordered_outcomes,
     ix = 0
     print("DOING:",trtinfo['bindf'].shape[0])
     t0 = time.time()
-    for binid in trtinfo['bindf']['binid']: 
+    for binid in trtinfo['bindf']['binid'][:5]: 
         if not "/" + binid in ctlbins:
             continue
         trt_compare, trtoutc = binfo(trtinfo, binid)
@@ -141,13 +141,11 @@ def matchctl(hisdir,ctl, drugid, idfile_name, calipername,ordered_outcomes,
                        if ctlpat[i+1] <= 0 ]:
                 to_exclude[ou].append(pid)
         '''
-        embcutoff = embcaliper[binid] #if len(caliper) > 0 else 0
-        if trt_compare.shape[0] < 2:
-            print("TINY BIN:"+ savename +" "+binid)
-        pscutoff = caliper.ps_caliper(trt_compare, trtinfo, binid,True,pscaliper,psmod) if trt_compare.shape[0] > 1 else 1
+        embcutoff = embcaliper[binid] #if len(caliper) > 0 else 0        
+        #pscutoff = caliper.ps_caliper(trt_compare, trtinfo, binid,True,pscaliper,psmod)
         #pscutoff = 0
-        #pscutoff = caliper.percentile_pscaliper(trt_compare,pscaliper, 0) if trt_compare.shape[0] > 1 else 1
-        #pdb.set_trace()
+        pscutoff = caliper.percentile_pscaliper(trt_compare,pscutoff, psvar) if trt_compare.shape[0] > 1 else 1
+        pdb.set_trace()
         tmatch_all, cmatch_all = one_bin_NN_pscaliper(trt_compare, ctldat,
                                             embcutoff, pscutoff,
                                             trtinfo['prec'],psmod)
@@ -180,7 +178,7 @@ def matchctl(hisdir,ctl, drugid, idfile_name, calipername,ordered_outcomes,
         #if ix > 5:
         #    break
         #print('{:d} {:s} have {:d}\n'.format(ix,binid,len(outcome_matches[0][0])))        
-    #pdb.set_trace()
+    pdb.set_trace()
     counts = {}
     if single_outcomes:
         np.savetxt(savename + ".ids.trt", tc_matches[0])

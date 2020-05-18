@@ -15,8 +15,6 @@ import his2ft
 import os
 import ps_match
 import file_names
-import pd_helper
-
 def caliperdict(trtname, trt,median=True, percentile=90,redo=None,hideous=''):
     if percentile == 0:
         return None
@@ -98,7 +96,6 @@ def get_caliper(trt_compare, trtinfo, binid, median, percentile):
         return trtdist.apply(lambda q: np.percentile(q[~pd.isnull(q)],percentile), axis=1).median()
     else:
         return np.percentile(trtdist.stack(), percentile)
-    
 def percentile_pscaliper(trt_compare, psk, psvar):
     if trt_compare.shape[0] > 1:
         #pdb.set_trace()
