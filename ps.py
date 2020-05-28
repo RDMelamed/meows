@@ -17,9 +17,12 @@ from sklearn.preprocessing import MaxAbsScaler
 from sklearn.metrics import roc_auc_score
 import file_names
 
-def get_ps(psmod):
+def get_optimal_setting(psmod):
     settings = list(psmod['preds'].keys())
-    modsetting = settings[0] if len(settings) == 1 else psmod['xval'].mean(axis=1).idxmax() 
+    return settings[0] if len(settings) == 1 else psmod['xval'].mean(axis=1).idxmax() 
+
+def get_ps(psmod):
+    modsetting = get_optimal_setting(psmod)
     return pd.Series(psmod['preds'][modsetting],index=psmod['ids'])
 
 
@@ -111,7 +114,48 @@ def agoexp(hisft, wid=360):
     xx = np.array(hisft.data)
     hisft.data = np.exp(-1*(xx)**2/wid)
     return hisft
+def get_sparseindex(hisdir, trt_drugid):
+    elct = pickle.load(open(file_names.sparse_index_name(hisdir, trt_drugid),'rb'))
+    SPFT_CUT = 100
+    sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
+                           dtype = int)
+    if sparse_index.shape[0] == 0:
+        sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > 10,:].index)),
+                           dtype = int)
+    sparse_index = np.delete(sparse_index,0)
+    return sparse_index
 
+def load_stack(trt_h5, ctl_h5, sparse_index, trt_useids, ctl_useids, transfunc=agobins, do_filt=True):
+    trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
+    ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
+    trt_dense = np.vstack(trt_dense)
+    spline_info = rs.get_spline_info(trt_dense[:,1:])
+    ctl_dense = np.vstack(ctl_dense)
+    dense = np.vstack((trt_dense, ctl_dense))
+    lab = np.hstack((np.ones(trt_dense.shape[0]),np.zeros(ctl_dense.shape[0])))
+    del trt_dense, ctl_dense
+    ids = dense[:,0]
+    dense = dense[:,1:]
+
+    splinify = rs.info2splines(spline_info)
+    dense = splinify(dense)
+
+    
+    hisft = sparse.vstack(trt_sparse+ ctl_sparse,format='csr')
+    del trt_sparse, ctl_sparse
+
+    if do_filt:
+        keep = np.array((hisft > 0).sum(axis=0))[0,:]
+        keep = (keep > 100) & (keep < .7*hisft.shape[0])
+
+        if (~keep).sum() > 0:
+            hisft = hisft[:,keep]
+            sparse_index =sparse_index[keep]
+            print("FILTERING ultrasparse:",(~keep).sum(), "->",hisft.shape )
+    
+    if transfunc:
+        hisft = transfunc(hisft)
+    return dense, hisft, lab, ids, sparse_index
 
 ## hisdir = where all files are
 ## name = name of treated -> look for name+".den", name +".npz"
@@ -145,46 +189,22 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
     trt_h5 = tables.open_file(file_names.sparseh5_names(hisdir, trt_drugid),'r')
     ctl_h5 = tables.open_file(file_names.sparseh5_names(hisdir, ctl_drugid),'r')
     modpred = {}
+    sparse_index = get_sparseindex(hisdir, trt_drugid)
     #sparse_index = file_names.get_sparse_index(hisdir, trtid)
-    elct = pickle.load(open(file_names.sparse_index_name(hisdir, trt_drugid),'rb'))
-    SPFT_CUT = 100
-    sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
-                           dtype = int)
-    if sparse_index.shape[0] == 0:
-        sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > 10,:].index)),
-                           dtype = int)
-        
-    sparse_index = np.delete(sparse_index,0)
     if index_in:
         pdb.set_trace()
         for i in ['.trt','.ctl']:
             os.symlink(os.path.basename(idfile + i), idfile.replace(".ids","."+ index_in +".ids" )+i)
         sparse_index = np.loadtxt(index_in)
     sparse_index = sparse_index[~np.isin(sparse_index, ft_exclude)]
-
+    dense, hisft, lab, ids, sparse_index = load_stack(trt_h5, ctl_h5, sparse_index, trt_useids, ctl_useids, transfunc)
     #print("ALWAYS BATCH")
+    #pdb.set_trace()
 
-    trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
-    ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
-    trt_dense = np.vstack(trt_dense)
-    ctl_dense = np.vstack(ctl_dense)
-    dense = np.vstack((trt_dense, ctl_dense))
-    lab = np.hstack((np.ones(trt_dense.shape[0]),np.zeros(ctl_dense.shape[0])))
-    del trt_dense, ctl_dense
-    ids = dense[:,0]
-    dense = dense[:,1:]
-    hisft = sparse.vstack(trt_sparse+ ctl_sparse,format='csr')
-    del trt_sparse, ctl_sparse
-    if transfunc:
-        hisft = transfunc(hisft)
-    keep = np.array((hisft > 0).sum(axis=0))[0,:]
-    keep = (keep > 100) & (keep < .7*hisft.shape[0])
-
-    if (~keep).sum() > 0:
-        hisft = hisft[:,keep]
-        print("FILTERING ultrasparse:",(~keep).sum(), "->",hisft.shape, ' for ', fsave )
+    #### stacks...
     modpred = featlab2modpred(dense, hisft, lab, alphas, l1s)
     modpred['ids'] = ids
+    modpred['filtix'] =  sparse_index #[keep]
     #if batch_test or len(trt_useids) + len(ctl_useids) < 1500000: #200000000: #150: #        
     #else:
     #    modpred = batch_ps(trt_h5, trt_useids, ctl_h5, ctl_useids,transfunc,alphas,l1s)
@@ -194,9 +214,6 @@ def ctl_propensity_score(hisdir, trt_drugid, ctl_drugid,idfile, ftsuffix=['ago']
     return fsave, modpred['xval']
     
 def featlab2modpred(dense, hisft, lab, alphas, l1s):
-    spline_info = rs.get_spline_info(dense[lab==1,:])
-    splinify = rs.info2splines(spline_info)
-    dense = splinify(dense)
     
     XS = sparse.hstack((dense,hisft), format='csr')
     #print("soaving!")

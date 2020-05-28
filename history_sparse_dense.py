@@ -37,9 +37,11 @@ import skips
 
 def history_parse(label, visits, dat, decode, outcomes, codesuffix, time_chunk_size, TEST=False):
     urx, rx, dx, px = visits  ### Rx and Dx are now in vocab-ids.  urx is not.
-    rx = rx[rx[:,0] != decode['rxi2' + codesuffix][label],:] ## remove the precise week of incident Rx
     entry = urx[urx[:,skips.rxc['generic']]==label,:][0]
     week = entry[skips.rxc['week']]
+    rx = rx[! ((rx[:,0] == decode['rxi2' + codesuffix][label]) &
+               (rx[:,1] == week)) ,:] ## remove the precise incident Rx
+    
     urxwk = urx[:,skips.rxc['week']] ## changing to number unique drugs in past year
     ret = [label, week,entry[skips.rxc['age']], dat['dem'][skips.demc['female']],
            sum((urxwk < week) & (urxwk >= week - 52))]
@@ -87,6 +89,7 @@ def history_parse(label, visits, dat, decode, outcomes, codesuffix, time_chunk_s
     for time_chunk in range(week, week + olist[0], time_chunk_size):
         
         #x = feat[(feat[:,1] >= time_chunk)& (feat[:,1] < time_chunk + time_chunk_size),0]
+        #pdb.set_trace()
         chunkadd = [sorted(set(feat[(feat[:,1] >= time_chunk) &
                                     (feat[:,1] < time_chunk + time_chunk_size) ,0]))
                     for feat in [rx, dx, px]]
@@ -378,7 +381,7 @@ def postparse(fdir):
     z['name'] = [decode['i2gennme'][str(i)] for i in z.index]
     #
     z.to_pickle(fdir + "/drug_neighbor_counts.pkl")
-    subprocess.call("bash run_sparsemat.sh " + fdir + " " + fdir + "/drug_neighbor_counts.pkl", shell=True)
+    ##subprocess.call("bash run_sparsemat.sh " + fdir + " " + fdir + "/drug_neighbor_counts.pkl", shell=True)
             
 if __name__=="__main__":
     '''

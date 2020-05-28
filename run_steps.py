@@ -33,7 +33,7 @@ import json
 from file_names import *
 
 ONLY_ONE = False
-
+TESTING = True
 def load_emb(hideous=''):
     femb, fdrugemb, fpred = pickle.load(open("../05.02_bigdrugs/emb50-500.pkl" if not hideous else hideous,'rb'))
     hname = os.path.basename(hideous).split(".")[0]    
@@ -43,9 +43,10 @@ def load_ugly(doid,noemb, hideous=''):
     newvoc = pd.read_pickle("../../data/clid.vi.allvocab.pkl")
     dodict = newvoc.loc[newvoc['type']=='rx',:].set_index('id').loc[doid,['vi']].to_dict()['vi']
     #dodict = newvoc.loc[newvoc['type']=='rx',:].set_index('id').loc[doid,['clid']].to_dict()['clid']
-    femb, hname = load_emb(hideous)
-    if noemb:
-        femb = np.zeros(0)
+    femb = np.zeros(0)
+    hname = ''
+    if not noemb:
+        femb, hname = load_emb(hideous)        
     return dodict, femb, hname
 
 
@@ -135,6 +136,9 @@ def drug_group2(drugid, doid, hisdir,outcomes,
             print("got one!")
     finished = open(runname+"complete_log").read().strip().split("\n")
     did_finish = False
+    if TESTING:
+        print("TESTING=True, not cleaning")
+        return
     if len(set(dodict.keys()) - set([drugid])  - set([int(i) for i in finished if not "complete" in i]))== 0:
         did_finish = True
         with open(runname+ "complete_log",'a') as f:
@@ -156,6 +160,7 @@ def run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername,  Q,
     dodict, emb50, hideous_name = load_ugly(doid, noemb)
     
     times_record = {}
+    print("run_ctl_proc ",time_chunk)
     for ctl in iter(Q.get, None):
         print("Q get",ctl)
         coxfilt = {'exclude':set([dodict[drugid], dodict[ctl]])}
@@ -164,6 +169,7 @@ def run_ctl_proc(hisdir, trtfiles,drugid, doid, calipername,  Q,
         x = prep_match(hisdir, trtfiles,drugid,
            coxfilt, emb50,ctl, outcomes,hideous=hideous,featweights=featweights,weight_method=weight_method)
         t1 = time.time()
+        #pdb.set_trace()
         times_record[str(ctl)] = onectl(hisdir, drugid, calipername,
                                         ctl, outcomes, psmatch=psmatch,
                                         NN_pscaliper=NN_pscaliper,hideous=hideous+ featweights + weight_method,
@@ -288,12 +294,20 @@ def onectl(hisdir,drugid, calipername,
         print("SKIPPING ", pair_allid, " too small!")
         return
     BFRAC = 1.75
+    def call_matching(id_name):
+        return ps2match2ipw(hisdir, drugid, calipername,
+                              ctl,  outcomes,[],
+                              idfile_name=id_name, #idfile_name,
+                              psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes, ft_exclude = ft_exclude, time_chunk=time_chunk)
+
     if max(len(trtid), len(ctlid)) > BFRAC*BIGNESS:
         trt_splits = 1 if len(trtid) <= BFRAC*BIGNESS else min(int(np.ceil(len(trtid)/BIGNESS)), 10)
         ctl_splits = 1 if len(ctlid) <= BFRAC*BIGNESS else min(int(np.ceil(len(ctlid)/BIGNESS)), 10)
         nsplits = min(trt_splits, ctl_splits) ## if they are both big guys then split both but limits # splits
         if nsplits == 1:  ## if only 1 is big then do that one
             nsplits = max(trt_splits, ctl_splits)
+        nsplits  =  min(nsplits, NSAMP)
+        print("doing Nsplits  =  ", nsplits,  " for ", pair_allid)
         trt_split_index = regression_splines.get_splitvec(len(trtid), trt_splits)
         ctl_split_index = regression_splines.get_splitvec(len(ctlid), ctl_splits)        
 
@@ -317,23 +331,19 @@ def onectl(hisdir,drugid, calipername,
                     #    np.random.shuffle(ctl_split_index)
                     
             #pdb.set_trace()
-            tr = ps2match2ipw(hisdir, drugid, calipername,
-                              ctl,  outcomes,[],
-                              idfile_name=pair_allid_samp_name, #idfile_name,
-                              psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes, ft_exclude = ft_exclude, time_chunk=time_chunk)
+            tr = call_matching(pair_allid_samp_name)            
             times_record.update(tr)
             if ONLY_ONE:
                 break
     else:
         #idfile_name = ".PSM" + str(i)
-        #pair_allid_samp =  pair_prefix + idfile_name        
-        tr = ps2match2ipw(hisdir, drugid, calipername,
-                          ctl,  outcomes,[], idfile_name = pair_allid_name,
-                          psmatch=psmatch,NN_pscaliper=NN_pscaliper, hideous=hideous, single_outcomes=single_outcomes, ft_exclude = ft_exclude)
+        #pair_allid_samp =  pair_prefix + idfile_name
+        tr = call_matching(pair_allid_name)
         times_record.update(tr)
     with open(runname + "complete_log", 'a') as f:
         f.write(str(ctl) + "\n")
     return times_record
+
 def ps2match2ipw(hisdir, drugid, calipername,
                  ctl,  outcomes,trt_to_exclude, ## trt_to_exclude -- don't really need this b/c using files of ids to match
                  idfile_name="PSM",
@@ -348,6 +358,8 @@ def ps2match2ipw(hisdir, drugid, calipername,
 
     ps.ctl_propensity_score(hisdir,drugid,ctl, runname + str(ctl) +"."+ idfile_name + ".ids",ft_exclude = ft_exclude,  alphas=alpha, l1s=l1)
     print("Finish big ps... @{:2.2f}".format((time.time() - tx)/60))
+
+    print("ps2match2ipw time_chunk=",time_chunk)
     times_record = {}
     times_record[idfile_name + 'bigps'] = (time.time() - tx)/60
     #oorder = sorted(outcomes.keys())
@@ -381,7 +393,7 @@ def writelog(strw, writeinfo):
 
 def run_comparators(trtname, hisdir,multiproc=True):
     if not os.path.exists("tmp/"):
-        mkdir("tmp/")
+        os.mkdir("tmp/")
     comparators = pickle.load(open("comparison_drug_mech.pkl",'rb'))        
     outcome = "../06.11_all_neighbors/outcomes_no_nonmel.pkl"
     voc = pd.read_pickle("../../data/clid.vi.allvocab.pkl")
@@ -415,9 +427,9 @@ def get_compid(trtname, comparators, voc):
     compid = list(set(compid))
     return compid
 
-def run_Q(Q, plock, hisdir,multi):
+def run_Q(Q, plock, hisdir,multi,time_chunk, run_outcomes=False, ps_caliper=.25):
     if not os.path.exists("tmp/"):
-        mkdir("tmp/")
+        os.mkdir("tmp/")
     #comparators = pickle.load(open("all_comparisons.pkl",'rb'))
     comparators = pickle.load(open("comparison_drug_mech.pkl",'rb'))        
     outcome = "../06.11_all_neighbors/outcomes_no_nonmel.pkl"
@@ -429,16 +441,6 @@ def run_Q(Q, plock, hisdir,multi):
 
 
         runname, _ = get_trt_names(hisdir, drugid)
-        trtid = runname + "trtid"
-        if os.path.exists(runname + "complete_log"):
-            finished = [i for i in open(runname+"complete_log").read().strip().split("\n") if "complete" in i]
-            if len(finished) > 0:
-                with open(hisdir + "todo.finished",'a') as f:
-                    f.write(trtname + "\n")
-                continue
-        #return
-        #comp  = comparators[trtname]
-        #comp  = comparators[trtname]['red-umls'][:15]
         comp = voc.set_index('name').loc[comparators[trtname]['red-umls'],:] #.sort_values('ct')
         if comp.shape[0] > 20:
             comp = comp.loc[comp['ct'] > 100000,:].iloc[:20,:]
@@ -451,33 +453,66 @@ def run_Q(Q, plock, hisdir,multi):
             comp = comp.loc[comp['ct'] > 100000,:].iloc[:20,:]
         compid.extend(list(comp['id'].values))   #voc.set_index('name').loc[comparators[trtname]['othermech'],'id'].values))
         compid = list(set(compid))
+        #pdb.set_trace()
+        if run_outcomes:            
+            runname, trtname = get_trt_names(hisdir, drugid)
+            print("OUTCOMES ", runname)
+            outcomes_sorted = sorted(pickle.load(open(outcome,'rb')).keys())
+            for ctl in compid:
+                pair_prefix = runname + str(ctl)
+                ex = ".ids.trt"
+                suff  = ".spm." + str(ps_caliper) + ex
+                print(suff, len(glob.glob(pair_prefix + "*" + suff)))
+                agg =  1
+                #pdb.set_trace()
+                for idstrt in glob.glob(pair_prefix + "*" + suff):
+                    outc_fnames =  idstrt.replace(ex,"")
+                    print("call: ", outc_fnames)
+                    subprocess.call("Rscript --vanilla run_eff.R " + outc_fnames + "  temporal" +
+                                    (" agg-" + str(agg) if agg > 1 else " X"),shell=True)
+                    
+                    #weights_outcomes.outcome_info(hisdir,outc_fnames.replace(suff,""), drugid, ctl, outcomes_sorted,time_chunk=time_chunk)
+            continue
+        
+        trtid = runname + "trtid"
+        if os.path.exists(runname + "complete_log"):
+            finished = [i for i in open(runname+"complete_log").read().strip().split("\n") if "complete" in i]
+            if len(finished) > 0:
+                with open(hisdir + "todo.finished",'a') as f:
+                    f.write(trtname + "\n")
+                continue
+        #return
+        #comp  = comparators[trtname]
+        #comp  = comparators[trtname]['red-umls'][:15]
         if len(compid) == 0:
             writelog("skip-No comp!\t" + trtname, plock)
             with open(hisdir + "todo.finished",'a') as f:
                 f.write(trtname + "\n")
             continue
 
-        #print(trtname,len(compid))
+        print("loop: ",trtname,len(compid))
 
         writelog("starting\t" + trtname + "\tdoing "+str(len(compid)), plock)
-
-        finished = drug_group2(drugid, compid, hisdir,outcome, psmatch=[.25],
-                          NN_pscaliper=[], multi=multi, single_outcomes=True,caliper_percentile=0)
-
+        finished = drug_group2(drugid, compid, hisdir,outcome,
+                               psmatch=[ps_caliper],
+                               NN_pscaliper=[], multi=multi,
+                               single_outcomes=True,caliper_percentile=0,
+                               time_chunk = time_chunk)
         writelog("finished\t" + trtname, plock)
 
         with open(hisdir + "todo.finished",'a') as f:
             f.write(trtname + "\n")
 
+def run_many(hisdir, subdo, time_chunk, outcomes_only = False):
 
-def run_many(hisdir, subdo):
-    print("START: " + subdo)
     Q = mp.Queue(maxsize=500000)
     #open('vallogf','w').close()
     plock = mp.Lock()
     #subdo = open(subdo).read().split("\n")
     #comparators = pickle.load(open("all_comparisons.pkl",'rb'))
     def readtodo(todo):
+        if not os.path.exists(todo):
+            return []
         return open(todo).read().strip().split("\n")
     todo = readtodo(hisdir + "todo")
     finished = readtodo(hisdir + "todo.finished")
@@ -487,26 +522,36 @@ def run_many(hisdir, subdo):
             f.write("\n".join(todo_updated) + "\n")
     for currtodo in glob.glob(hisdir + "todo.curr*"):
         todo_updated = todo_updated - set(readtodo(currtodo))
+    print("DOIN:  " + "~".join(todo_updated))
     thisdo = list(todo_updated)[:min(len(todo_updated), 30)]
     with open(hisdir + "todo.curr." + subdo,'w') as f:
         f.write("\n".join(thisdo) + "\n")
 
     for c in thisdo: #open(subdo).read().strip().split("\n"):
         Q.put(c)
-    nproc = 6
+    if TESTING:
+        Q.put(None)
+        run_Q(Q, [plock, "log."+subdo],hisdir, False,
+              time_chunk, outcomes_only)
+        return
+    
+    nproc = 3
     ps = []
     for p in range(nproc):
         ps.append(mp.Process(target = run_Q,
-                         args = (Q, [plock, "log."+subdo],hisdir, False)))
+                         args = (Q, [plock, "log."+subdo],hisdir, False,
+                                 time_chunk, outcomes_only)))
         ps[-1].start()
         Q.put(None)
     for p in ps:
         p.join()
         print("got one in run_many!")
+
         
 if __name__ == "__main__":
     #if len(sys.argv) > 2:
     #    run_comparators(sys.argv[1], sys.argv[2])
     #else:
-    run_many(sys.argv[1], sys.argv[2])
-#sbatch ../../code/matchweight/run_onedrug.sh bupropion_hydrochloride mixed_histories/    
+    run_many(sys.argv[1], sys.argv[2],sys.argv[3], sys.argv[4]=="outcomes" if len(sys.argv)>4 else False)
+#sbatch ../../code/matchweight/run_onedrug.sh bupropion_hydrochloride mixed_histories/
+# sbatch ../../code/matchweight/run_onedrug.sh alld-12/  0 12 outcomes

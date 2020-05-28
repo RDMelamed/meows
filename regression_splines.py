@@ -131,7 +131,7 @@ def make_mods(iter, alphas, l1s, class_weight='balanced'):
     for l1 in l1s:
         for p in alphas:
             mods[str(l1) + "-" + str(p)] = SGDClassifier(loss="log", penalty="elasticnet",
-                                                         alpha=p, l1_ratio=l1,max_iter=iter, tol=None,
+                                                         alpha=p, l1_ratio=l1,max_iter=iter, tol=-np.infty,
                                                          class_weight= class_weight)
     return mods
 
@@ -178,10 +178,17 @@ def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1
             preds = {k:sgdmods[k].predict_proba(Xval)[:,1]
                      for k in sgdmods}
             for k in preds:
-                roc = roc_auc_score(labval, preds[k])
+                roc = .5
+                ### rare (?) censoring occasions  may have no positives
+                if labval.sum() > 0:
+                    roc = roc_auc_score(labval, preds[k])
+                    print(k,roc)                    
+                else:
+                    print("no  positives in",labval.shape[0]," samples, train has:",lab[splits!=f].sum())
+                ###
                 #if roc < .5:
                 #    pdb.set_trace()
-                print(k,roc)
+
                 rocs.loc[k,f] = roc
             
             print("FOLD ",f)
@@ -189,8 +196,10 @@ def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1
     xtrans = scaler.fit_transform(XS_in)    
     for k in sgdmods:
         sgdmods[k].fit(xtrans, lab_in)
-        sgdmods[k].intercept_ = sgdmods[k].intercept_ + np.log(lab_in.mean()/(1-lab_in.mean()))
+        intercept_save = sgdmods[k].intercept_ 
+        sgdmods[k].intercept_ = intercept_save + np.log(lab_in.mean()/(1-lab_in.mean()))
         preds[k] = sgdmods[k].predict_proba(xtrans)[:,1]
+        sgdmods[k].intercept_ = intercept_save 
     return sgdmods, scaler, lab, preds, rocs
 
 def get_splitvec(shape, nf=5):

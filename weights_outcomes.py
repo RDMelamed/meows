@@ -56,22 +56,39 @@ def omat(nodeinfo,omax):
     return np.hstack((pdat,anyo))
 
 
-## single_outcomes = if TRUE then you have ALL outcomes must not have happened at time of drug prescription. if FALSE then you are considering outcomes independently, in which case some of the people in the data might have a history of the outcome and you would need to exclude those people from the matching, do a separate matching  for each outcome, more or less a pain in ass
-def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True, weighting=True,time_chunk=0):
+def run_temporal(hisdir, outc_fnames, drugid, ctl, outcomes_sorted,time_chunk,agg=1):
 
+    #if not os.path.exists(outc_fnames + ".trt.censwt.bz2") and
+    if time_chunk0:        
+        censoring_weights(hisdir, outc_fnames, drugid, ctl, outcomes_sorted,drugid, time_chunk, agg=agg)
+        #if not os.path.exists(outc_fnames + ".ctl.censwt.bz2") and time_chunk>0:                    
+        censoring_weights(hisdir, outc_fnames, ctl, drugid, outcomes_sorted,drugid, time_chunk,agg=agg)
+
+    #if not os.path.exists(outc_fnames + ".msmeff.txt") and time_chunk>0:                           
+    subprocess.call("Rscript --vanilla run_eff.R " + outc_fnames + "  temporal" +
+                    (" agg-" + str(agg) if agg > 1 else " X"),shell=True)
+
+## single_outcomes = if TRUE then you have ALL outcomes must not have happened at time of drug prescription. if FALSE then you are considering outcomes independently, in which case some of the people in the data might have a history of the outcome and you would need to exclude those people from the matching, do a separate matching  for each outcome, more or less a pain in ass
+def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclude=[],whichdo='', single_outcomes=True, weighting=False,time_chunk=0,agg=1):
+    print("outcome_info time_chunk=",time_chunk)    
     def run_R_est(outc_fnames):
         print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + outc_fnames + " " + " " + str(single_outcomes) + " " + str(weighting) )
         subprocess.call("Rscript --vanilla run_eff.R " + outc_fnames + " " + 
                         ("single_cross_section"  if single_outcomes else "multi_cross_section")
                         + " " + str(weighting) ,shell=True)
-
+    time_chunk = int(time_chunk)
     def run_temporal():
-        if not os.path.exists(outc_fnames + ".trt.censwt.gz") and time_chunk>0:        
-            censoring_weights(hisdir, outc_fnames, drugid, ctl, outcomes_sorted,drugid, time_chunk)
-        if not os.path.exists(outc_fnames + ".ctl.censwt.gz") and time_chunk>0:                    
-            censoring_weights(hisdir, outc_fnames, ctl, drugid, outcomes_sorted,drugid, time_chunk)
-        if not os.path.exists(outc_fnames + ".msmeff.txt") and time_chunk>0:                                
-            subprocess.call("Rscript --vanilla run_eff.R " + outc_fnames + "  temporal" ,shell=True)
+        if time_chunk==0:
+            return
+        #if not os.path.exists(outc_fnames + ".trt.censwt.bz2") and
+        
+        censoring_weights(hisdir, outc_fnames, drugid, ctl, outcomes_sorted,drugid, time_chunk, agg=agg)
+            #if not os.path.exists(outc_fnames + ".ctl.censwt.bz2") and time_chunk>0:                    
+        censoring_weights(hisdir, outc_fnames, ctl, drugid, outcomes_sorted,drugid, time_chunk,agg=agg)
+            
+        #if not os.path.exists(outc_fnames + ".msmeff.txt") and time_chunk>0:                           
+        subprocess.call("Rscript --vanilla run_eff.R " + outc_fnames + "  temporal" +
+                        (" agg-" + str(agg) if agg > 1 else " X"),shell=True)
         
     #outc_fnames = hisdir + pspref
     savepref = 'min-' if whichdo else ''
@@ -81,7 +98,7 @@ def outcome_info(hisdir, outc_fnames, drugid, ctl, outcomes_sorted, trt_to_exclu
             print("Exists, returning: " + savepref + outc_fnames + ".iptw")
             if not os.path.exists(outc_fnames + ("" if weighting else ".unwt") + ".eff"):
                 run_R_est(outc_fnames)
-
+            print("... for" + savepref + outc_fnames + ".iptw time_chunk=",time_chunk)
             run_temporal()
             return
         
@@ -228,19 +245,38 @@ def get_weights(XS, lab, full_interval, savename):
 
 
 
-def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_CHUNK, agg=1, FILT_ERA=0):
+def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_CHUNK,
+                      agg=1, FILT_ERA=0, drug1_washout=np.inf):
     #dense, spmat, futmat = [np.array(), sparse.csr_matrix(), sparse.csr_matrix()]
     #if not os.path.exists(outname + ".den.trt.pkl") or os.path.exists(outname + ".den.ctl.pkl"):
     save_suff = (".trt" if drug1==trt else ".ctl")
     suff2 =  (".agg-" + str(agg) if agg > 1 else "") +  (".filt-" +  str(FILT_ERA) if FILT_ERA > 0 else '')
-    if os.path.exists(outname + save_suff + suff2 +  ".censwt.gz"):
-        print("exists: ", outname + save_suff + suff2+  ".censwt.gz")
+    if drug1_washout < np.inf:
+        suff2 +=  ".drug1-" + str(drug1_washout)
+    print("Starting: ", outname + save_suff + suff2+  ".censwt.bz2")    
+    if os.path.exists(outname + save_suff + suff2 +  ".censwt.bz2"):
+        print("exists: ", outname + save_suff + suff2+  ".censwt.bz2")
         return
-    dense, spmat, futmat, lab, fut_sparse_ix = his2ft.censored_sparsemat(hisdir,trt,
-                                                                         np.loadtxt(outname + ".ids" + save_suff), drug1, drug2, TIME_CHUNK, agg=agg)
+    drug_ids = np.loadtxt(outname + ".ids" + save_suff)
+    past_sparse_index = ps.get_sparseindex(hisdir, trt)
+    myh5 = tables.open_file(file_names.sparseh5_names(hisdir, drug1),'r')
+    _, my_sparse = ps.load_selected(myh5, drug_ids, past_sparse_index)
+    my_sparse = sparse.vstack(my_sparse, format='csr')
+    keep = np.array((my_sparse > 0).sum(axis=0))[0,:]
+    keep = (keep > 50) & (keep < .7*my_sparse.shape[0])
+    del _, my_sparse
+    #pdb.set_trace()
+    past_sparse_index = past_sparse_index[keep]
+    
+    dense, spmat, futmat, lab, fut_sparse_ix, cens_info = his2ft.censored_sparsemat(hisdir,  past_sparse_index,
+                                                                         np.loadtxt(outname + ".ids" + save_suff), drug1, drug2, TIME_CHUNK, agg=agg, washout=drug1_washout)
+    #pdb.set_trace()
     if agg > 1:
         TIME_CHUNK = TIME_CHUNK*agg
     lab = np.array(lab)
+
+    '''
+    cens_info["as_treated"] = cens_info['interval_end'] if drug1==trt else np.zeros(cens_info.shape[0])
     cens_info = pd.DataFrame({'ids':dense[:,0],
 
                               #"week":dense[:,2],
@@ -248,11 +284,14 @@ def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_C
     ## transform week to week SINCE drug
     def offs(w): return list(w - w.min())
     woffs  = pd.DataFrame(dense[:,[0,2]],columns=['ids','week']).groupby("ids")['week'].agg(offs)
-    #pdb.set_trace()
+
     cens_info["interval_start"] = np.hstack([woffs[k] for k in
                                    cens_info['ids'].drop_duplicates()])
     interval_length = np.where(dense[:,1]==0,TIME_CHUNK, dense[:,1])
     cens_info["interval_end"] = cens_info['interval_start'] + interval_length
+    '''
+    cens_info["as_treated"] = cens_info['interval_end'] if drug1==trt else np.zeros(cens_info.shape[0])
+    #pdb.set_trace()    
     if FILT_ERA >  0:
         sel = np.where(cens_info['interval_start']  < FILT_ERA)[0]
         cens_info = cens_info.iloc[sel,:]
@@ -265,7 +304,7 @@ def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_C
     formula = rs.get_formula(spline_info)
 
     ### adding in time since index date 
-    dense = np.hstack((splinify(dense[:,2:]), cens_info['interval_start'], cens_info['interval_start']**2))
+    dense = np.hstack((splinify(dense[:,2:]), cens_info['interval_start'].values.reshape(-1,1), cens_info['interval_start'].values.reshape(-1,1)**2))
     #full_interval = dense[:,1]
     spmat = ps.agoexp(spmat)
     #xx = sparse.hstack((dense,spmat, futmat),format='csr')
@@ -284,7 +323,7 @@ def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_C
                              lab*cens_info['num']/(cens_info['den'])
     cens_info['cum_wt'] = cens_info.groupby('ids')['single_wt'].agg('cumprod')
 
-    outcomes = pd.read_table(outname + ".iptw",sep="\t")
+    outcomes = pd.read_csv(outname + ".iptw",sep="\t")
     outcomes = outcomes.loc[outcomes['label']==int(drug1==trt),:].set_index("id")
     def cmat(week):
         patid = week.name
@@ -303,7 +342,13 @@ def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_C
     gb = np.vstack([gb[k] for k in cens_info['ids'].drop_duplicates()])
     cens_info = pd.concat((cens_info,
                            pd.DataFrame(gb,columns=outcomes.columns[4:])),axis=1)
-    cens_info.to_csv(outname + save_suff +suff2+ ".censwt.gz",sep="\t",header=True,compression='gzip')
+    cens_info = cens_info.loc[cens_info['censored']==0,:] #.drop('lab',axis=1)
+    print("SAVING: ", outname + save_suff + suff2+  ".censwt.bz2",  cens_info.shape)
+    #pdb.set_trace()
+    #with open("LOGGY",'a') as f:
+    #    f.write("SAVING: "+ outname + save_suff + suff2+  ".censwt.bz2")
+    #cens_info.to_csv(outname + save_suff +suff2+ ".censwt",sep="\t",header=True)        
+    cens_info.to_csv(outname + save_suff +suff2+ ".censwt.bz2",sep="\t",header=True,compression='bz2')
 '''    
 for i in glob.glob("*iptw"):
     if not os.path.exists(i.replace("iptw","eff")):
@@ -323,5 +368,5 @@ def boot_one(outc_fnames, namereplace = 'PSM',
         fn = outc_fnames.replace(namereplace, namereplace + "boot" + str(i)) 
         pd.concat((t.iloc[sel,:], c.iloc[sel,:]),axis=0).to_csv(fn+ ".iptw",sep="\t",index=False)
         print("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + fn  + " " + " " + str(single_outcomes) + " " + str(weighting) )
-o1
+
         subprocess.call("Rscript --vanilla /project2/melamed/wrk/iptw/code/matchweight/run_eff.R " + fn + " " + " " + str(single_outcomes) + " " + str(weighting) ,shell=True)

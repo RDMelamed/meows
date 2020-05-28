@@ -7,6 +7,13 @@ def get_trt_names(hisdir, drugid):
         os.mkdir(runname)
     return runname, runname + 'trt'
 
+
+def combo_names(hisdir, drugid):
+    runname = hisdir + 'Combo.' + str(drugid) +"/"
+    if not os.path.exists(runname):
+        os.mkdir(runname)
+    return runname, runname + 'trt'
+
 def get_pair_name(hisdir, drugid,ctl):
     runname, trtname = get_trt_names(hisdir,drugid)
     return runname + str(ctl) #"Target.{:d}/{:d}".format(drugid, ctl)    

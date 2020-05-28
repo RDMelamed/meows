@@ -93,7 +93,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
     outcomecache = defaultdict(list)    
     tabcacheCt = defaultdict(int)
     scaler = StandardScaler()
-    print("capping bins at 50k!!!!")
+    #print("capping bins at 50k!!!!")
     overflowlist = []
 
     
@@ -137,7 +137,7 @@ def bin_pats(savedir, embmat, filters, todo_files, drugid, #savename,
         tabcacheCt[onebin] = 0
         tabcache[onebin] = []
         outcomecache[onebin] = []        
-    pbig = set(np.array(np.loadtxt("pbig"),dtype=int))
+    #pbig = set(np.array(np.loadtxt("pbig"),dtype=int))
     #pdb.set_trace()
     def bin_store(bindemo, bincontents,binsseen, binoutcomes):
         bindemo = pd.DataFrame(bindemo,columns=['week','age','gender','urx'])
@@ -366,8 +366,7 @@ def timefunc(b):
 ## filters = elements in the vocab of the data that cause remove a patient (see make_dofilts)
 ## todo_files = files to become the rows of our matrices
 ## idfile = another filter, only keep IDs in these files, as when you are doing sparsemat to evaluate a matching
-def prepare_sparsemat2(hisdir, sparseindex_name, drugdo, filters,
-                       idfile = '', hideous = ''):
+def prepare_sparsemat2(hisdir, sparseindex_name, drugdo, filters, idfile = ''):
     
     savename = file_names.sparseh5_names(hisdir, drugdo) #hisdir + outname 
     todo_files = file_names.todo_files(hisdir, drugdo)
@@ -456,126 +455,10 @@ def prepare_sparsemat2(hisdir, sparseindex_name, drugdo, filters,
     store_to(node_name)
     h5tab.close()
 
-
-
-def prepare_sparsemat_future(hisdir, trt, ctl, trtid, ctlid, savename):
-    savename = file_names.sparseh5_names(hisdir, drugdo) #hisdir + outname 
-
-    if os.path.exists(savename):
-        if TESTING:
-            subprocess.call("rm " + savename,shell=True)
-        else:
-            return
-
-
-    elct = pickle.load(open(file_names.sparse_index_name(hisdir, trt_drugid),'rb'))
-    SPFT_CUT = 100
-    past_sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
-                           dtype = int)
-    if past_sparse_index.shape[0] == 0:
-        past_sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > 10,:].index)),
-                           dtype = int)
-    voc = pd.read_pickle("../../data/clid.vi.allvocab.pkl")        
-    fut_sparse_index = np.arange(1,voc['vi'].max()+1)
-    fut_made_index = False
-    trt_vi = voc.loc[(voc['type']=="rx") & (voc['id']==trt_drugid),"vi"]
-    ctl_vi = voc.loc[(voc['type']=="rx") & (voc['id']==ctl_drugid),"vi"]    
-    ncol = len(past_sparse_index)
-    
-    dense = []
-    h5tab = tables.open_file(savename, 'a') 
-    #densefile = savename +".den"
-
-    spmat = {'rows':[], 'cols':[], 'dat':[], 'ncol':len(past_sparse_index)}
-    futmat = {'rows':[], 'cols':[], 'dat':[], 'ncol':len(fut_sparse_index)}
-    lab = []
-    r = 0
-    node_name = 0
-    fut_sparse_elements = defaultdict(int)
-    '''
-    def store_to(node_name):
-        group = h5tab.create_group("/", 'c' + str(node_name), str(node_name))
-        sp_store = sparse.csr_matrix((spmat['dat'],(spmat['rows'],spmat['cols'])),
-                              shape=(r,spmat['ncol']))
-
-        for attribute in ('data', 'indices', 'indptr', 'shape'):
-            # add nodes
-            arr = np.array(getattr(sp_store, attribute))
-            atom = tables.Atom.from_dtype(arr.dtype)
-            ds = h5tab.create_carray(group, attribute, atom, arr.shape,
-                                     chunkshape = arr.shape)
-            ds[:] = arr
-        arr = np.array(dense)
-        atom = tables.Atom.from_dtype(arr.dtype)
-        ds = h5tab.create_carray(group, "den", atom, arr.shape)
-        ds[:] = arr
-
-    '''
-
-    useids = trtid
-    for fdo in file_names.todo_files(hisdir, trt):
-        for row in csv.reader(open(fdo), delimiter='\t',quoting = csv.QUOTE_NONNUMERIC):
-            patid, outcome, drug, bindemoi, nonbin_demoi, x, future = parse_row(row)
-            if not patid in useids:
-                continue
-            ### then get indexed version (some super rare wouldn't be included but maybe yes if are part of a group...)
-            x2, mycol = align_to_sparseindex(x, sparse_index)
-            future_periods = np.where(np.array(future)==-2)[0]
-            for el in set(chain.from_iterable([future[(future_periods[fp]+2):future_periods[fp+1]] for fp in range(len(future_periods))])):
-                fut_sparse_elements[el] += 1
-            
-            for fut in range(len(future_periods)-1):
-                timedat += list(x2[1,:] + .5) ### NOTE adding .5 so sparse zero (==NEVER) != zero days before!
-                rowlist += [r]*len(mycol)
-                collist += list(mycol) #list(x + len(den))
-                dense.append([patid] + bindemoi + nonbin_demoi)
-
-                fut_elt = future[future_periods[fut]:future_periods[fut+1]]
-                fut_x2, fut_mycol = align_to_sparseindex(fut_elt, fut_sparse_index)
-                futmat['rows'] += [r]*len(fut_mycol)
-                futmat['cols'] += list(fut_mycol)
-                futmat['dat'] += [1]*len(fut_mycol)
-                r += 1                
-                if ctlvi in fut_elt:
-                    lab += [1]
-                    break
-                else:
-                    lab += [0]
-
-
-            if len(dense) > save_size:
-                print("BIG")
-            '''
-                store_to(node_name)
-                dense = []
-                rowlist = []
-                collist = []
-                timedat = []
-                r = 0
-                node_name += 1
-            '''
-    dense = np.array(dense)
-    spmat = sparse.csr_matrix((spmat['dat'],(spmat['rows'],spmat['cols'])),
-                              shape=(r,spmat['ncol']))
-    futmat = sparse.csr_matrix((futmat['dat'],(futmat['rows'],futmat['cols'])),
-                              shape=(r,futmat['ncol']))
-    ct = pd.DataFrame(fut_sparse_elements,index=['ct']).transpose()
-    fut_elts =list(ct.loc[ct['ct'] > 100,:].index)
-    sel = np.where(np.isin(fut_elts, fut_sparse_index))[0]
-    futmat = futmat[:, sel]
-
-    return dense, spmat, futmat
-    #f = open(savename +"sparse_index.pkl",'wb')
-    #pickle.dump((ct), f)
-    #f.close()
-            
-    #store_to(node_name)
-    #h5tab.close()
-
 #TIME_CHUNK = 25
-OLD_FMT = False
-def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_CHUNK, agg=1):
+def censored_sparsemat(hisdir, past_sparse_index, use_ids, this_drug, other_drug,TIME_CHUNK, agg=1,  washout=np.inf):
     t0 = time.time()
+    '''
     elct = pickle.load(open(file_names.sparse_index_name(hisdir, trt_drugid),'rb'))
     SPFT_CUT = 100
     past_sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > SPFT_CUT,:].index)),
@@ -583,11 +466,14 @@ def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_C
     if past_sparse_index.shape[0] == 0:
         past_sparse_index =np.array(sorted(list(elct.loc[elct['ct'] > 10,:].index)),
                            dtype = int)
-    past_sparse_index = np.delete(past_sparse_index,0)        
+    past_sparse_index = np.delete(past_sparse_index,0)
+    '''
     voc = pd.read_pickle("../../data/clid.vi.allvocab.pkl")        
     #fut_sparse_index = np.arange(1,voc['vi'].max()+1)
     #fut_made_index = False
     other_vi = voc.loc[(voc['type']=="rx") & (voc['id']==other_drug),"vi"].values[0]
+    this_vi = voc.loc[(voc['type']=="rx") & (voc['id']==this_drug),"vi"].values[0]
+    
     ncol = len(past_sparse_index)
     
     dense = []
@@ -634,16 +520,14 @@ def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_C
                     chunk_len  = 0
                     chunk_contents = []
                     #future_periods_agg += future_periods[f_ind]
+                    
                     for toagg in range(agg):
                         if f_ind == len(future_periods):
                             break
                         fstart = future_periods[f_ind]
                         last_chunk = f_ind == len(future_periods)-1
-                        if OLD_FMT:
-                            chunk_len += future[fstart + 1]
-                        else:
-                            chunk_len += future[fstart + 1] if last_chunk else TIME_CHUNK
-                        chunk_contents += future[fstart + (2 if OLD_FMT else 1):(len(future) if last_chunk else future_periods[f_ind+1])]
+                        chunk_len += future[fstart + 1] if last_chunk else TIME_CHUNK
+                        chunk_contents += future[fstart + 1:(len(future) if last_chunk else future_periods[f_ind+1])]
                         f_ind +=  1
                         
                     future_agg += [-2, chunk_len] + sorted(set(chunk_contents))
@@ -652,6 +536,7 @@ def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_C
                 future_periods = np.where(np.array(future)==-2)[0]            
                                       
             #pdb.set_trace()
+            last_drug1_ago = 0
             for fut in range(len(future_periods)):
                 spmat['dat'] += list(x2[1,:] + .5) ### NOTE adding .5 so sparse zero (==NEVER) != zero days before!
                 spmat['rows'] += [r]*len(mycol)
@@ -660,20 +545,25 @@ def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_C
 
                 #pdb.set_trace()
                 dense.append([patid, 
-                              0 if not last_chunk else future[future_periods[fut]+1],
-                              bindemoi[0]+TIME_CHUNK*fut, bindemoi[1] + TIME_CHUNK*agg/52*fut] +
-                             bindemoi[2:] + nonbin_demoi)
+                              0 if not last_chunk else future[future_periods[fut]+1],##chunk len
+                              bindemoi[0]+(TIME_CHUNK*agg)*fut, ## study week
+                              bindemoi[1] + TIME_CHUNK*agg/52*fut] ##age
+                             + bindemoi[2:] + nonbin_demoi)
 
                 ### get columns of the future periods co
-                fut_elt = future[future_periods[fut]+(2 if OLD_FMT else 1):
+                fut_elt = future[future_periods[fut]+1:
                                  (len(future) if last_chunk else future_periods[fut+1])]
                 fut_mycol = np.where(np.isin(fut_sparse_index, fut_elt))[0]
                 #fut_x2, fut_mycol = align_to_sparseindex(fut_elt, fut_sparse_index)
                 futmat['rows'] += [r]*len(fut_mycol)
                 futmat['cols'] += list(fut_mycol)
                 futmat['dat'] += [1]*len(fut_mycol) #fut_mycol)
-                r += 1                
-                if other_vi in fut_elt:
+                r += 1
+                if this_vi not in fut_elt:
+                    last_drug1_ago += TIME_CHUNK*agg
+                else:
+                    last_drug1_ago = 0
+                if other_vi in fut_elt or last_drug1_ago > washout:
                     #pdb.set_trace()
                     lab += [1]
                     break
@@ -693,7 +583,20 @@ def censored_sparsemat(hisdir, trt_drugid, use_ids, this_drug, other_drug,TIME_C
 
     t1  = time.time()
     print("END nrow={:d} {:2.2f}, time = {:1.2f} min".format(dense.shape[0], process.memory_info().rss/10**9,(t1 - t0)/60))
-    return dense, spmat, futmat, lab, fut_sparse_index
+
+    cens_info = pd.DataFrame({'ids':dense[:,0],
+                              "censored":lab})
+    ## transform week to week SINCE drug
+    def offs(w): return list(w - w.min())
+    woffs  = pd.DataFrame(dense[:,[0,2]],columns=['ids','week']).groupby("ids")['week'].agg(offs)
+
+    cens_info["interval_start"] = np.hstack([woffs[k] for k in
+                                   cens_info['ids'].drop_duplicates()])
+    interval_length = np.where(dense[:,1]==0,TIME_CHUNK, dense[:,1])
+    cens_info["interval_end"] = cens_info['interval_start'] + interval_length
+
+    
+    return dense, spmat, futmat, lab, fut_sparse_index, cens_info
             
     #store_to(node_name)
     #h5tab.close()
