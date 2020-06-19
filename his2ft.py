@@ -429,7 +429,6 @@ def prepare_sparsemat2(hisdir, sparseindex_name, drugdo, filters, idfile = ''):
             #if row[0] == 1845:
             #    pdb.set_trace()
             patid, outcome, drug, bindemoi, nonbin_demoi, x, future = parse_row(row)
-            #pdb.set_trace()
             if useids and not patid in useids:
                 continue
             if dofilts(x, bindemoi):

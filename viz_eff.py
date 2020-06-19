@@ -87,7 +87,10 @@ def pairci(dird,trt,ctl,newvoc,sord_in=[],outc_sel = [],filt='',tots=True):
 def readmse(est):
     eff =  pd.read_table(est + ".msmeff.txt",sep="\t")
     se =  pd.read_table(est + ".msmmse.txt",sep="\t")
-    N =   pd.read_table(est + '.N.txt',sep=" ")
+    N = pd.DataFrame(index=eff.columns,  columns = ['x'])
+    N.iloc[:] = 200
+    if os.path.exists(est + ".N.txt"):
+        N =   pd.read_table(est + '.N.txt',sep=" ")
     ret = {}
     for cancer in eff.columns:
         reg = pd.DataFrame({'survco':eff[cancer],
@@ -96,7 +99,64 @@ def readmse(est):
         ret[cancer]=  reg
     return N, pd.concat(ret,axis=1)
 
-def msmpairci(dird,trt,ctl,newvoc,cut, suff  =  '', sord_in=[],outc_sel = [],tots=True):
+def msmpairci(dird,trt,ctl,newvoc,cuts, suff  =  '', antisuff='', sord_in=[],outc_sel = [],tots=True):
+    runname, trtname = file_names.get_trt_names(dird, trt)
+    pairname = runname + str(ctl)
+    tname = newvoc.loc[(newvoc['id']==trt) &(newvoc['type']=='rx'),'name'].values[0]
+    cname = newvoc.loc[(newvoc['id']==ctl) &(newvoc['type']=='rx'),'name'].values[0]
+    title = tname + " vs CTL=" + cname
+    return msmeff(pairname, title,cuts, suff = suff, antisuff=antisuff, sord_in=sord_in,outc_sel = outc_sel,tots=tots)
+
+def comboci(dird,trt, drug2,prefix,newvoc,cuts, suff  =  '', antisuff='', sord_in=[],outc_sel = [],tots=True):
+    runname = file_names.combo_names(dird, trt)
+    pairname = runname + prefix + str(drug2)
+    tname = newvoc.loc[(newvoc['id']==trt) &(newvoc['type']=='rx'),'name'].values[0]
+    cname = newvoc.loc[(newvoc['vi']==drug2) &(newvoc['type']=='rx'),'name'].values[0]
+    title = tname + " + drug2=" + cname
+    return msmeff(pairname, title,cuts, suff = suff, antisuff=antisuff, sord_in=sord_in,outc_sel = outc_sel,tots=tots)
+
+    
+def msmeff(pairname, title, cuts, suff  =  '', antisuff='', sord_in=[],outc_sel = [],tots=True):
+    print("pn",pairname, " anti=",antisuff)
+    prefs= [i.replace(".msmeff.txt","") for i in glob.glob(pairname + "*" + suff + ".msmeff.txt")]
+    if antisuff:
+        prefs= [i for i in prefs if not antisuff in i]
+
+        
+    #print("\n".join(prefs))
+    prefs = {i.replace(pairname +".",""):i for i in prefs}
+    pnames = []
+    agg = {}
+    Ns = {}
+    for p, fname in prefs.items():
+        N,  estf = readmse(fname)
+        for cut in cuts:
+            est = pd.DataFrame(estf.loc[cut,:]).transpose().stack().transpose()
+            est.columns= est.columns.droplevel(0)
+            pn  = p + "-" + str(cut)
+            pnames.append(pn)
+            agg[pn] = pd.DataFrame({"surv":np.exp(est['survco']),
+                                   "surv.LI":np.exp(est['survco']  - 1.96*est['survse']),
+                                   "surv.UI":np.exp(est['survco']  + 1.96*est['survse']),
+                                   "event":N['x']})
+        #Ns[p]= N['x']
+        #Ndo = N.drop("treat").loc[N['x']> 100].index
+
+    #Ns = pd.DataFrame(Ns)
+    eff325 = pd.concat(agg, axis=1)
+    eff325 = eff325.loc[eff325.xs("event",axis=1,level=1).min(axis=1) > 80,:]        
+    if outc_sel:
+        eff325 = eff325.loc[outc_sel,:]
+    #eff325 = match_auc.load_eff(dird,ctl, trt, prefs)
+    f, ax ,yl= plotci('surv',eff325, matcher=pnames, 
+                      tots=[] if not tots else pd.DataFrame(eff325.xs('event',axis=1,level=1).min(axis=1),
+                                                         columns=['tot']),sord_in = sord_in) #outcs.min(axis=1)[outcsel])
+    #
+    ax.set_title(title)
+    return eff325, f, ax
+
+
+def save(dird,trt,ctl,newvoc,cuts, suff  =  '', sord_in=[],outc_sel = [],tots=True):
     runname, trtname = file_names.get_trt_names(dird, trt)
     pairname = runname + str(ctl)
     #print("pn",pairname)
@@ -106,13 +166,14 @@ def msmpairci(dird,trt,ctl,newvoc,cut, suff  =  '', sord_in=[],outc_sel = [],tot
     agg = {}
     Ns = {}
     for p, fname in prefs.items():
-        N,  est = readmse(fname)
-        est = pd.DataFrame(est.loc[cut,:]).transpose().stack().transpose()
-        est.columns= est.columns.droplevel(0)
-        agg[p] = pd.DataFrame({"surv":np.exp(est['survco']),
-                               "surv.LI":np.exp(est['survco']  - 1.96*est['survse']),
-                               "surv.UI":np.exp(est['survco']  + 1.96*est['survse']),
-                               "event":N['x']})
+        for cut in cuts:
+            N,  est = readmse(fname)
+            est = pd.DataFrame(est.loc[cut,:]).transpose().stack().transpose()
+            est.columns= est.columns.droplevel(0)
+            agg[p + "-" + str(cut)] = pd.DataFrame({"surv":np.exp(est['survco']),
+                                   "surv.LI":np.exp(est['survco']  - 1.96*est['survse']),
+                                   "surv.UI":np.exp(est['survco']  + 1.96*est['survse']),
+                                   "event":N['x']})
         #Ns[p]= N['x']
         #Ndo = N.drop("treat").loc[N['x']> 100].index
 
@@ -126,8 +187,6 @@ def msmpairci(dird,trt,ctl,newvoc,cut, suff  =  '', sord_in=[],outc_sel = [],tot
                       tots=[] if not tots else pd.DataFrame(eff325.xs('event',axis=1,level=1).min(axis=1),
                                                          columns=['tot']),sord_in = sord_in) #outcs.min(axis=1)[outcsel])
     #
-    tname = newvoc.loc[(newvoc['id']==trt) &(newvoc['type']=='rx'),'name'].values[0]
-    cname = newvoc.loc[(newvoc['id']==ctl) &(newvoc['type']=='rx'),'name'].values[0]
     ax.set_title(tname + " vs CTL=" + cname)
     return eff325, f, ax
 

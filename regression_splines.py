@@ -93,7 +93,7 @@ def info2splines(for_formula):
         pt = dmatrix(formula, get_patsydict(for_formula, Xin))
         ###  (sex, splines of other demo pt) ###, sparseft g)
         
-        return np.hstack((Xin[:,2].reshape(-1,1), pt, Xin[:,6:])) #, pt.design_info.column_names
+        return np.hstack((Xin[:,2].reshape(-1,1), pt)) #, Xin[:,6:])) #, pt.design_info.column_names
     return makeX
 
 def get_patsydict(for_formula, Xin):
@@ -135,46 +135,49 @@ def make_mods(iter, alphas, l1s, class_weight='balanced'):
                                                          class_weight= class_weight)
     return mods
 
-def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1s=[.3,.2],fit_sel=np.zeros(0)):
+import psutil
+def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1s=[.3,.2],fit_sel=np.zeros(0), too_big=2000000):
     XS = XS_in
     lab = lab_in
+    process = psutil.Process(os.getpid())            
+    if XS.shape[0] > too_big:
+        sel = np.random.choice(XS.shape[0], too_big, replace=False)
+        XS = XS[sel,:]
+        lab = lab[sel]
+        if fit_sel.shape[0] > 0:
+            fit_sel = fit_sel[sel]
+        #print("Changing numfold to 3! for: ", XS.shape[0])
+        print("Changing numfold to 3! {:d} for: {:1.2f}", XS.shape[0],process.memory_info().rss/10**9)
+        numfold = 3
+    
     if fit_sel.shape[0] > 0:
         XS = XS_in[fit_sel,:]
-        lab = lab_in[np.where(fit_sel)[0]]        
+        lab = lab_in[fit_sel]
+
+    
+    '''
+    if XS.shape[0] > too_big:
+        sel = np.random.choice(XS.shape[0], too_big, replace=False)
+        XS = XS[sel,:]
+        lab = lab[sel]
+        print("Changing numfold to 3! for: ", XS.shape[0])
+        numfold = 3
+    '''
     iter = int(iter/XS.shape[0]) #500 00000
     sgdmods = make_mods(iter, alphas, l1s)
     scaler = MaxAbsScaler()    
-    '''
-    if iter > 3:
-        iter = int(iter/XS.shape[0]) #500 00000
-
-    sgdmods = {str(alph):SGDClassifier(loss="log", penalty="elasticnet",
-                                       alpha=alph, l1_ratio=.3,max_iter=iter,
-                                        class_weight= 'balanced')
-               for alph in alphas}
-
-    for p in alphas:
-        sgdmods['r5.' + str(p)] = SGDClassifier(loss="log", penalty="elasticnet",
-                                                alpha=p, l1_ratio=.2,max_iter=iter,
-                                                class_weight= 'balanced')
-    '''
     splits = get_splitvec(lab.shape[0], nf = numfold)        
-    rocs = pd.DataFrame(index=sgdmods.keys(), columns=np.arange(numfold))
+    rocs = pd.DataFrame(index=sgdmods.keys(), columns=np.arange(numfold),
+                        dtype=float)
 
-    #pdb.set_trace()
     if len(l1s) > 1 or len(alphas) > 1:
-        #print("hiii")
         for f in range(numfold):
-            print("starting fold:")
             scaler.fit(XS[splits!=f,:])
-            #pdb.set_trace()        
             Xval = scaler.transform(XS[splits==f,:])
             X = scaler.transform(XS[splits!=f,:])
-            print("about to fit fold:")
             for k in sgdmods:
                 sgdmods[k].fit(X, lab[splits!=f])
             labval = lab[splits == f]
-            print("about to eval fold:")            
             preds = {k:sgdmods[k].predict_proba(Xval)[:,1]
                      for k in sgdmods}
             for k in preds:
@@ -182,20 +185,18 @@ def cross_val(XS_in, lab_in, numfold, iter=5000000, alphas=[.001,.0005,.0001],l1
                 ### rare (?) censoring occasions  may have no positives
                 if labval.sum() > 0:
                     roc = roc_auc_score(labval, preds[k])
-                    print(k,roc)                    
                 else:
                     print("no  positives in",labval.shape[0]," samples, train has:",lab[splits!=f].sum())
-                ###
-                #if roc < .5:
-                #    pdb.set_trace()
-
                 rocs.loc[k,f] = roc
-            
-            print("FOLD ",f)
+            bestf = rocs[f].idxmax()
+            print("FOLD ",f, " best=",bestf," @{:1.2f} - Mem = {:1.2f}Gb".format(rocs.loc[bestf,f], process.memory_info().rss/10**9))
     preds = {}
     xtrans = scaler.fit_transform(XS_in)    
     for k in sgdmods:
-        sgdmods[k].fit(xtrans, lab_in)
+        if XS_in.shape[0] > too_big:
+            sgdmods[k].fit(scaler.transform(XS),lab)
+        else:
+            sgdmods[k].fit(xtrans, lab_in)
         intercept_save = sgdmods[k].intercept_ 
         sgdmods[k].intercept_ = intercept_save + np.log(lab_in.mean()/(1-lab_in.mean()))
         preds[k] = sgdmods[k].predict_proba(xtrans)[:,1]

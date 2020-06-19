@@ -2,7 +2,7 @@ import glob
 import os
 
 def get_trt_names(hisdir, drugid):
-    runname = hisdir + 'Target.' + str(drugid) +"/"
+    runname = hisdir + 'TargetON.' + str(drugid) +"/"
     if not os.path.exists(runname):
         os.mkdir(runname)
     return runname, runname + 'trt'

@@ -12,6 +12,8 @@
 export SQLITE_TMPDIR=/project2/arzhetsky/MSdb/tmp
 export TMPDIR=/project2/arzhetsky/MSdb/tmp
 export PYTHONPATH=/project2/melamed/wrk/iptw/code:$PYTHONPATH
-module load Anaconda3
+module load Anaconda3/5.3.0
 #ipython /project2/melamed/wrk/iptw/code/history_sparse_dense.py $@
-/software/Anaconda3-5.0.0.1-el7-x86_64/bin/ipython /project2/melamed/wrk/iptw/code/matchweight/history_sparse_dense.py $@
+#/software/Anaconda3-5.0.0.1-el7-x86_64/bin/ipython /project2/melamed/wrk/iptw/code/matchweight/history_sparse_dense.py $@
+
+python /project2/melamed/wrk/iptw/code/matchweight/history_sparse_dense.py $@

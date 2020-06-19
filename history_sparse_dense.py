@@ -36,10 +36,11 @@ import enQ
 import skips
 
 def history_parse(label, visits, dat, decode, outcomes, codesuffix, time_chunk_size, TEST=False):
+    #pdb.set_trace()    
     urx, rx, dx, px = visits  ### Rx and Dx are now in vocab-ids.  urx is not.
     entry = urx[urx[:,skips.rxc['generic']]==label,:][0]
     week = entry[skips.rxc['week']]
-    rx = rx[! ((rx[:,0] == decode['rxi2' + codesuffix][label]) &
+    rx = rx[~((rx[:,0] == decode['rxi2' + codesuffix][label]) &
                (rx[:,1] == week)) ,:] ## remove the precise incident Rx
     
     urxwk = urx[:,skips.rxc['week']] ## changing to number unique drugs in past year
@@ -177,6 +178,8 @@ def historyloop(Q, doid, name, prefix, outcomes, time_chunk_size):
         '''
         #if TESTING:        
         #    print person, res
+        #if person ==6979:
+        #    pdb.set_trace()
         alldo, visits = skips.urx_rx_dx(dat, doid, decode)
         if alldo:
             tried += 1                        
@@ -291,6 +294,7 @@ def main(doid,prefix, outcomes, time_chunk_size, ndo=0,neg_enQ=False, history=Tr
                          args = (Q, doid,nprocs,ndo))
     enQproc.start()
     if TESTING:
+        print("testing")
         target = historyloop if history else mysteryloop
         target(Q, doid if not neg_enQ else set([]),
                                             str(0), prefix,outcomes, time_chunk_size)

@@ -67,6 +67,7 @@ def load_chunk(trt_h5, tn, trt_useids, sparse_index):
     node = trt_h5.get_node("/" + tn )
     #den = node.den
     ids = node.den[:,0] #ids = node[:,0]
+    #pdb.set_trace()
     sel = np.isin(ids, trt_useids)
     if sel.sum() == 0:
         return None
@@ -127,6 +128,7 @@ def get_sparseindex(hisdir, trt_drugid):
 
 def load_stack(trt_h5, ctl_h5, sparse_index, trt_useids, ctl_useids, transfunc=agobins, do_filt=True):
     trt_dense, trt_sparse = load_selected(trt_h5, trt_useids, sparse_index)
+
     ctl_dense, ctl_sparse = load_selected(ctl_h5, ctl_useids, sparse_index)
     trt_dense = np.vstack(trt_dense)
     spline_info = rs.get_spline_info(trt_dense[:,1:])
@@ -143,7 +145,7 @@ def load_stack(trt_h5, ctl_h5, sparse_index, trt_useids, ctl_useids, transfunc=a
     
     hisft = sparse.vstack(trt_sparse+ ctl_sparse,format='csr')
     del trt_sparse, ctl_sparse
-
+    pdb.set_trace()
     if do_filt:
         keep = np.array((hisft > 0).sum(axis=0))[0,:]
         keep = (keep > 100) & (keep < .7*hisft.shape[0])

@@ -287,9 +287,10 @@ def censoring_weights(hisdir, outname, drug1, drug2, outcomes_sorted,trt, TIME_C
 
     cens_info["interval_start"] = np.hstack([woffs[k] for k in
                                    cens_info['ids'].drop_duplicates()])
-    interval_length = np.where(dense[:,1]==0,TIME_CHUNK, dense[:,1])
+
     cens_info["interval_end"] = cens_info['interval_start'] + interval_length
     '''
+    interval_length = np.where(dense[:,1]==0,TIME_CHUNK, dense[:,1])    
     cens_info["as_treated"] = cens_info['interval_end'] if drug1==trt else np.zeros(cens_info.shape[0])
     #pdb.set_trace()    
     if FILT_ERA >  0:
